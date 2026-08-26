@@ -14,7 +14,7 @@ final class OverlaySound {
         guard let url = Bundle.main.url(forResource: name, withExtension: "mp3"),
             let player = try? AVAudioPlayer(contentsOf: url)
         else { return nil }
-        player.volume = 0.6
+        player.volume = 0.15
         player.prepareToPlay()
         return player
     }

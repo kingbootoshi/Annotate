@@ -21,6 +21,7 @@ class OverlayWindow: NSPanel {
     private var currentFeedbackView: NSView?
     private var quickPicker: QuickPickerView?
     private var acceptedMouseMovedBeforePicker = false
+    private var pickerMoveMonitor: Any?
     private var feedbackRemovalTask: DispatchWorkItem?
     
     // Create undo manager for this window
@@ -144,6 +145,13 @@ class OverlayWindow: NSPanel {
         quickPicker = picker
         acceptedMouseMovedBeforePicker = acceptsMouseMovedEvents
         acceptsMouseMovedEvents = true
+        pickerMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) {
+            [weak self] event in
+            guard let self, let picker = self.quickPicker else { return event }
+            let windowPoint = self.convertPoint(fromScreen: NSEvent.mouseLocation)
+            picker.updateSelection(mouseInSuperview: self.overlayView.convert(windowPoint, from: nil))
+            return event
+        }
     }
 
     func commitQuickPicker() {
@@ -182,18 +190,13 @@ class OverlayWindow: NSPanel {
     }
 
     private func dismissQuickPicker() {
+        if let monitor = pickerMoveMonitor {
+            NSEvent.removeMonitor(monitor)
+            pickerMoveMonitor = nil
+        }
         quickPicker?.removeFromSuperview()
         quickPicker = nil
         acceptsMouseMovedEvents = acceptedMouseMovedBeforePicker
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        if let picker = quickPicker {
-            picker.updateSelection(
-                mouseInSuperview: overlayView.convert(event.locationInWindow, from: nil))
-            return
-        }
-        super.mouseMoved(with: event)
     }
 
     override func keyUp(with event: NSEvent) {
