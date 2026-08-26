@@ -19,6 +19,8 @@ class OverlayWindow: NSPanel {
     
     // Track the current feedback view to remove it when a new one appears
     private var currentFeedbackView: NSView?
+    private var quickPicker: QuickPickerView?
+    private var acceptedMouseMovedBeforePicker = false
     private var feedbackRemovalTask: DispatchWorkItem?
     
     // Create undo manager for this window
@@ -128,7 +130,90 @@ class OverlayWindow: NSPanel {
 
     func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    func beginQuickPicker(_ mode: QuickPickerView.Mode) {
+        guard quickPicker == nil else { return }
+        let anchor = overlayView.convert(mouseLocationOutsideOfEventStream, from: nil)
+        let picker = QuickPickerView(
+            mode: mode,
+            anchor: anchor,
+            within: overlayView.bounds,
+            currentColor: overlayView.currentColor,
+            currentWidth: overlayView.currentLineWidth
+        )
+        overlayView.addSubview(picker)
+        quickPicker = picker
+        acceptedMouseMovedBeforePicker = acceptsMouseMovedEvents
+        acceptsMouseMovedEvents = true
+    }
+
+    func commitQuickPicker() {
+        guard let picker = quickPicker else { return }
+        dismissQuickPicker()
+
+        switch picker.mode {
+        case .color:
+            guard let color = picker.selectedColor, let appDelegate = AppDelegate.shared else { return }
+            if let colorData = try? NSKeyedArchiver.archivedData(
+                withRootObject: color, requiringSecureCoding: false)
+            {
+                UserDefaults.standard.set(colorData, forKey: "SelectedColor")
+            }
+            appDelegate.currentColor = color
+            appDelegate.overlayWindows.values.forEach { $0.currentColor = color }
+            appDelegate.updateStatusBarIcon(with: color)
+            CursorHighlightManager.shared.annotationColor = color
+            showFeedback("Color", lineColor: color, lineWidth: overlayView.currentLineWidth)
+        case .width:
+            guard let width = picker.selectedWidth else { return }
+            UserDefaults.standard.set(Double(width), forKey: UserDefaults.lineWidthKey)
+            AppDelegate.shared?.overlayWindows.values.forEach {
+                $0.overlayView.currentLineWidth = width
+            }
+            showFeedback(
+                String(format: "%.0f px", width),
+                lineColor: overlayView.currentColor,
+                lineWidth: width)
+        }
+    }
+
+    func cancelQuickPicker() {
+        guard quickPicker != nil else { return }
+        dismissQuickPicker()
+    }
+
+    private func dismissQuickPicker() {
+        quickPicker?.removeFromSuperview()
+        quickPicker = nil
+        acceptsMouseMovedEvents = acceptedMouseMovedBeforePicker
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if let picker = quickPicker {
+            picker.updateSelection(
+                mouseInSuperview: overlayView.convert(event.locationInWindow, from: nil))
+            return
+        }
+        super.mouseMoved(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if quickPicker != nil {
+            let key = event.characters?.lowercased() ?? ""
+            if key == ShortcutManager.shared.getShortcut(for: .colorPicker)
+                || key == ShortcutManager.shared.getShortcut(for: .lineWidthPicker)
+            {
+                commitQuickPicker()
+                return
+            }
+        }
+        super.keyUp(with: event)
+    }
+
     override func mouseDown(with event: NSEvent) {
+        if quickPicker != nil {
+            commitQuickPicker()
+            return
+        }
         // Update cursor highlight for local events (global monitors don't capture our own app's events)
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive {
@@ -683,10 +768,10 @@ class OverlayWindow: NSPanel {
                 AppDelegate.shared?.enableEraserMode(NSMenuItem())
                 return
             case ShortcutManager.shared.getShortcut(for: .colorPicker):
-                AppDelegate.shared?.showColorPicker(nil)
+                if !event.isARepeat { beginQuickPicker(.color) }
                 return
             case ShortcutManager.shared.getShortcut(for: .lineWidthPicker):
-                AppDelegate.shared?.showLineWidthPicker(nil)
+                if !event.isARepeat { beginQuickPicker(.width) }
                 return
             case ShortcutManager.shared.getShortcut(for: .toggleBoard):
                 AppDelegate.shared?.toggleBoardVisibility(nil)
@@ -697,6 +782,11 @@ class OverlayWindow: NSPanel {
             default:
                 break
             }
+        }
+
+        if quickPicker != nil && event.keyCode == 53 {
+            cancelQuickPicker()
+            return
         }
 
         switch event.keyCode {
