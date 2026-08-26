@@ -24,21 +24,5 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/epilande/Annotate/main/appcast.xml</string>
-	<key>SUPublicEDKey</key>
-	<string>zKs810UVligBC4LdTPa0TXY4P7R6jtg7ZjjeQX1ULLk=</string>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
-	<key>SUScheduledCheckInterval</key>
-	<integer>86400</integer>
-	<key>SUAllowsAutomaticUpdates</key>
-	<false/>
-	<key>SUEnableSystemProfiling</key>
-	<false/>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
-	<key>SUEnableDownloaderService</key>
-	<true/>
 </dict>
 </plist>

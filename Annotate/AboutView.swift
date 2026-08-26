@@ -1,12 +1,6 @@
-import Sparkle
 import SwiftUI
 
 struct AboutView: View {
-    private let updaterController: SPUStandardUpdaterController
-
-    init(updaterController: SPUStandardUpdaterController) {
-        self.updaterController = updaterController
-    }
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown"
@@ -56,14 +50,8 @@ struct AboutView: View {
             Divider()
                 .padding(.horizontal)
             
-            // Update Section
             VStack(spacing: 12) {
-                Button("Check for Updates") {
-                    updaterController.checkForUpdates(nil)
-                }
-                .buttonStyle(.borderedProminent)
-                
-                Text("Automatic updates are enabled")
+                Text("Local build — automatic updates removed")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
@@ -92,9 +80,5 @@ struct AboutView: View {
 }
 
 #Preview {
-    AboutView(updaterController: SPUStandardUpdaterController(
-        startingUpdater: false,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    ))
+    AboutView()
 }

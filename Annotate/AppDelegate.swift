@@ -1,6 +1,5 @@
 import Carbon
 import Cocoa
-import Sparkle
 import SwiftUI
 
 @MainActor
@@ -15,7 +14,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     var overlayWindows: [NSScreen: OverlayWindow] = [:]
     var alwaysOnMode: Bool = false
     var aboutWindow: NSWindow?
-    var updaterController: SPUStandardUpdaterController!
     let userDefaults: UserDefaults
 
     // Cursor Highlight
@@ -80,18 +78,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         }
 
         setupBoardObservers()
-
-        #if DEBUG
-        let startUpdater = false
-        #else
-        let startUpdater = true
-        #endif
-
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: startUpdater,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
 
         setupApplicationMenu()
 
@@ -332,12 +318,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
                 keyEquivalent: ",")
             settingsItem.keyEquivalentModifierMask = [.command]
             menu.addItem(settingsItem)
-
-            let checkForUpdatesItem = NSMenuItem(
-                title: "Check for Updates...",
-                action: #selector(checkForUpdates),
-                keyEquivalent: "")
-            menu.addItem(checkForUpdatesItem)
 
             menu.addItem(NSMenuItem.separator())
 
@@ -925,7 +905,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     
     @objc func showAbout() {
         if aboutWindow == nil {
-            let aboutView = AboutView(updaterController: updaterController)
+            let aboutView = AboutView()
             let hostingController = NSHostingController(rootView: aboutView)
             
             aboutWindow = NSWindow(
@@ -947,10 +927,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         }
 
         NSApp.activate(ignoringOtherApps: true)
-    }
-    
-    @objc func checkForUpdates() {
-        updaterController.checkForUpdates(nil)
     }
 
     // MARK: - Cursor Highlighting

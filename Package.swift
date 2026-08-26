@@ -10,13 +10,12 @@ let package = Package(
         .executable(name: "Annotate", targets: ["Annotate"])
     ],
     dependencies: [
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.2.4"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.8.0")
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.2.4")
     ],
     targets: [
         .executableTarget(
             name: "Annotate",
-            dependencies: ["KeyboardShortcuts", "Sparkle"],
+            dependencies: ["KeyboardShortcuts"],
             path: "Annotate",
             exclude: [
                 "Annotate.entitlements",
