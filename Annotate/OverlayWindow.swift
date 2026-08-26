@@ -275,14 +275,7 @@ class OverlayWindow: NSPanel {
             showFeedback("Color", lineColor: color, lineWidth: overlayView.currentLineWidth)
         case .width:
             guard let width = picker.selectedWidth else { return }
-            UserDefaults.standard.set(Double(width), forKey: UserDefaults.lineWidthKey)
-            AppDelegate.shared?.overlayWindows.values.forEach {
-                $0.overlayView.currentLineWidth = width
-            }
-            showFeedback(
-                String(format: "%.0f px", width),
-                lineColor: overlayView.currentColor,
-                lineWidth: width)
+            applyLineWidth(width)
         case .fontSize:
             guard let size = picker.selectedFontSize else { return }
             applyTextFontSize(size)
@@ -942,6 +935,12 @@ class OverlayWindow: NSPanel {
             case ShortcutManager.shared.getShortcut(for: .toggleClickEffects):
                 AppDelegate.shared?.toggleClickEffects(nil)
                 return
+            case "[":
+                stepStrokeLevel(-1)
+                return
+            case "]":
+                stepStrokeLevel(1)
+                return
             default:
                 break
             }
@@ -1238,6 +1237,44 @@ class OverlayWindow: NSPanel {
         overlayView.currentTextAnnotation?.hasBackground = enabled
         UserDefaults.standard.textBackgroundEnabled = enabled
         showFeedback(enabled ? "Label Background On" : "Label Background Off")
+    }
+
+    func applyLineWidth(_ width: CGFloat) {
+        guard width != overlayView.currentLineWidth else { return }
+        UserDefaults.standard.set(Double(width), forKey: UserDefaults.lineWidthKey)
+        AppDelegate.shared?.overlayWindows.values.forEach {
+            $0.overlayView.currentLineWidth = width
+        }
+        showFeedback(
+            String(format: "%.0f px", width),
+            lineColor: overlayView.currentColor,
+            lineWidth: width)
+    }
+
+    private func stepStrokeLevel(_ direction: Int) {
+        if overlayView.currentTool == .text {
+            let options = QuickPickerView.fontSizeOptions
+            let index = nearestIndex(in: options, to: UserDefaults.standard.textToolFontSize)
+            applyTextFontSize(options[(index + direction).clamped(to: 0...(options.count - 1))])
+            return
+        }
+
+        let options = QuickPickerView.widthOptions
+        let index = nearestIndex(in: options, to: overlayView.currentLineWidth)
+        applyLineWidth(options[(index + direction).clamped(to: 0...(options.count - 1))])
+    }
+
+    private func nearestIndex(in options: [CGFloat], to value: CGFloat) -> Int {
+        var best = 0
+        var bestDistance = CGFloat.greatestFiniteMagnitude
+        for (index, option) in options.enumerated() {
+            let distance = abs(option - value)
+            if distance < bestDistance {
+                bestDistance = distance
+                best = index
+            }
+        }
+        return best
     }
 
     private func showFontSizeFeedback(_ size: CGFloat) {
