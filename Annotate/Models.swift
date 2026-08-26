@@ -15,7 +15,7 @@ enum ToolType: String, CaseIterable {
 
     var displayName: String {
         switch self {
-        case .pen: return "Pen"
+        case .pen: return "Brush"
         case .highlighter: return "Highlighter"
         case .arrow: return "Arrow"
         case .line: return "Line"

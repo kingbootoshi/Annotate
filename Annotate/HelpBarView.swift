@@ -25,7 +25,7 @@ struct HelpBarView: View {
     @Namespace private var lensSpace
 
     private static let tools: [(ToolType, ShortcutKey, String)] = [
-        (.pen, .pen, "pencil"),
+        (.pen, .pen, "paintbrush.pointed.fill"),
         (.highlighter, .highlighter, "highlighter"),
         (.arrow, .arrow, "arrow.up.right"),
         (.line, .line, "line.diagonal"),

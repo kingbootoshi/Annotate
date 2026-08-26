@@ -176,7 +176,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
             menu.addItem(lineModeItem)
 
             let penModeItem = NSMenuItem(
-                title: "Pen",
+                title: "Brush",
                 action: #selector(enablePenMode(_:)),
                 keyEquivalent: ShortcutManager.shared.getShortcut(for: .pen))
             penModeItem.keyEquivalentModifierMask = []

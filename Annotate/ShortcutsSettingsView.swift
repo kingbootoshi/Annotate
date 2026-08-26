@@ -14,8 +14,8 @@ struct ShortcutsSettingsView: View {
             Section {
                 ShortcutSettingRow(
                     tool: .pen,
-                    label: "Pen",
-                    description: "Draw freeform pen strokes",
+                    label: "Brush",
+                    description: "Draw freeform brush strokes",
                     shortcuts: $shortcuts,
                     editingShortcut: $editingShortcut
                 )

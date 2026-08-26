@@ -1319,8 +1319,8 @@ class OverlayWindow: NSPanel {
 
         switch tool {
         case .pen:
-            toolName = "Pen"
-            icon = "✒️"
+            toolName = "Brush"
+            icon = "🖌️"
         case .arrow:
             toolName = "Arrow"
             icon = "➡️"

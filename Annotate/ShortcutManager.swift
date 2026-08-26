@@ -21,12 +21,17 @@ enum ShortcutKey: String, CaseIterable {
     case toggleClickEffects = "k"
 
     var defaultKey: String {
-        self == .select ? "s" : rawValue
+        switch self {
+        case .pen: return "b"
+        case .select: return "s"
+        case .toggleBoard: return "p"
+        default: return rawValue
+        }
     }
 
     var displayName: String {
         switch self {
-        case .pen: return "Pen"
+        case .pen: return "Brush"
         case .arrow: return "Arrow"
         case .line: return "Line"
         case .highlighter: return "Highlighter"
