@@ -146,6 +146,35 @@ class CursorHighlightManager: @unchecked Sendable {
         }
     }
 
+
+    // MARK: - Tool-Aware Cursor
+
+    enum ToolCursorKind {
+        case style
+        case crosshair
+        case ring
+        case system
+    }
+
+    var activeTool: ToolType = .pen {
+        didSet {
+            guard activeTool != oldValue else { return }
+            notifyStateChanged()
+        }
+    }
+
+    var toolCursorKind: ToolCursorKind {
+        switch activeTool {
+        case .pen, .highlighter:
+            return activeCursorStyle == .none ? .system : .style
+        case .rectangle, .circle, .line, .arrow, .counter:
+            return .crosshair
+        case .eraser:
+            return .ring
+        case .text, .select:
+            return .system
+        }
+    }
     // MARK: - Active Cursor Settings
 
     var activeCursorStyle: ActiveCursorStyle {
@@ -237,7 +266,7 @@ class CursorHighlightManager: @unchecked Sendable {
     }
 
     func shouldShowActiveCursorOnScreen(_ screen: NSScreen) -> Bool {
-        isOverlayActiveOnScreen(screen) && activeCursorStyle != .none
+        isOverlayActiveOnScreen(screen) && toolCursorKind != .system
     }
 
     func hasAnyActiveOverlay() -> Bool {
@@ -246,7 +275,7 @@ class CursorHighlightManager: @unchecked Sendable {
 
     /// Used to keep cursor highlight windows active when any overlay is visible
     func shouldShowActiveCursorOnAnyScreen() -> Bool {
-        hasAnyActiveOverlay() && activeCursorStyle != .none
+        hasAnyActiveOverlay() && toolCursorKind != .system
     }
 
     // MARK: - Release Animation

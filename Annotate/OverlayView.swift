@@ -93,7 +93,14 @@ class OverlayView: NSView, NSTextFieldDelegate {
     var lastMousePosition: NSPoint = .zero
 
     var currentColor: NSColor = .systemRed
-    var currentTool: ToolType = .pen
+    var currentTool: ToolType = .pen {
+        didSet {
+            guard currentTool != oldValue else { return }
+            CursorHighlightManager.shared.activeTool = currentTool
+            window?.invalidateCursorRects(for: self)
+            updateCursor()
+        }
+    }
     var previousTool: ToolType = .pen
     var currentLineWidth: CGFloat = 3.0
 

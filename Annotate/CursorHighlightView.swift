@@ -23,6 +23,9 @@ class CursorHighlightView: NSView {
     private var cachedCrosshairPath: CGPath?
     private var cachedCrosshairSize: CGFloat = 0
 
+    private var cachedScreenshotCrosshairPath: CGPath?
+    private var cachedScreenshotCrosshairSize: CGFloat = 0
+
     private var cachedBrushGoldPath: CGPath?
     private var cachedBrushBarrelPath: CGPath?
     private var cachedBrushInkPath: CGPath?
@@ -219,13 +222,48 @@ class CursorHighlightView: NSView {
         let cursorOnThisScreen = window.screen?.frame.contains(globalPosition) ?? false
         let screenHasActiveOverlay = window.screen.map { manager.isOverlayActiveOnScreen($0) } ?? false
 
-        if screenHasActiveOverlay && cursorOnThisScreen && manager.activeCursorStyle != .none {
+        if screenHasActiveOverlay && cursorOnThisScreen && manager.toolCursorKind != .system {
             let windowPoint = window.convertPoint(fromScreen: globalPosition)
             let localPoint = convert(windowPoint, from: nil)
 
             accentLayer.opacity = 0
 
-            switch manager.activeCursorStyle {
+            switch manager.toolCursorKind {
+            case .system:
+                cursorLayer.opacity = 0
+                outlineLayer.opacity = 0
+
+            case .crosshair:
+                let size = max(24, manager.activeCursorSize * 1.6)
+
+                outlineLayer.path = screenshotCrosshairPath(for: size)
+                outlineLayer.position = localPoint
+                outlineLayer.fillColor = Self.whiteCG
+                outlineLayer.strokeColor = Self.blackCG
+                outlineLayer.lineWidth = 0.75
+                outlineLayer.opacity = 1
+
+                cursorLayer.opacity = 0
+
+            case .ring:
+                let size = max(14, manager.activeCursorSize)
+
+                outlineLayer.path = spotlightPath(for: size)
+                outlineLayer.position = localPoint
+                outlineLayer.fillColor = nil
+                outlineLayer.strokeColor = Self.whiteCG
+                outlineLayer.lineWidth = 2
+                outlineLayer.opacity = 1
+
+                cursorLayer.path = spotlightPath(for: size + 3)
+                cursorLayer.position = localPoint
+                cursorLayer.fillColor = nil
+                cursorLayer.strokeColor = Self.blackCG
+                cursorLayer.lineWidth = 1
+                cursorLayer.opacity = 0.6
+
+            case .style:
+                switch manager.activeCursorStyle {
             case .outline:
                 let scale = manager.systemCursorScale
                 let paths = outlineCursorPaths(for: scale)
@@ -303,6 +341,7 @@ class CursorHighlightView: NSView {
 
             case .none:
                 break
+                }
             }
         } else {
             cursorLayer.opacity = 0
@@ -322,6 +361,25 @@ class CursorHighlightView: NSView {
             cachedSpotlightSize = size
         }
         return cachedSpotlightPath!
+    }
+
+    private func screenshotCrosshairPath(for size: CGFloat) -> CGPath {
+        if size != cachedScreenshotCrosshairSize || cachedScreenshotCrosshairPath == nil {
+            let half = size / 2
+            let arm = half * 0.78
+            let gap = half * 0.22
+            let thickness = max(2.0, size / 13)
+            let ht = thickness / 2
+
+            let path = CGMutablePath()
+            path.addRect(CGRect(x: gap, y: -ht, width: arm, height: thickness))
+            path.addRect(CGRect(x: -gap - arm, y: -ht, width: arm, height: thickness))
+            path.addRect(CGRect(x: -ht, y: gap, width: thickness, height: arm))
+            path.addRect(CGRect(x: -ht, y: -gap - arm, width: thickness, height: arm))
+            cachedScreenshotCrosshairPath = path
+            cachedScreenshotCrosshairSize = size
+        }
+        return cachedScreenshotCrosshairPath!
     }
 
     private func circlePaths(for size: CGFloat) -> (outer: CGPath, inner: CGPath) {
