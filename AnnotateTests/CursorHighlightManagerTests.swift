@@ -86,50 +86,13 @@ final class CursorHighlightManagerTests: XCTestCase {
         )
     }
 
-    // MARK: - spotlightRequiresOverlay Tests
-
-    func testSpotlightRequiresOverlayDefaultsToFalse() {
-        XCTAssertFalse(manager.spotlightRequiresOverlay, "spotlightRequiresOverlay should default to false")
-    }
-
-    func testSpotlightRequiresOverlaySetToTruePersistsToUserDefaults() {
-        manager.spotlightRequiresOverlay = true
-
-        XCTAssertTrue(manager.spotlightRequiresOverlay, "spotlightRequiresOverlay should be true after setting")
-        let persistedValue = testDefaults.bool(forKey: UserDefaults.spotlightRequiresOverlayKey)
-        XCTAssertTrue(persistedValue, "spotlightRequiresOverlay should be persisted to UserDefaults")
-    }
-
-    // MARK: - cursorHighlightAvailable Computed Property Tests
-
-    func testCursorHighlightAvailableMatchesCursorHighlightEnabledWhenGateIsOff() {
-        manager.spotlightRequiresOverlay = false
-
+    func testCursorHighlightUnavailableWithoutActiveOverlay() {
         manager.cursorHighlightEnabled = true
-        XCTAssertTrue(
-            manager.cursorHighlightAvailable,
-            "cursorHighlightAvailable should be true when the spotlight is enabled and the gate is off"
-        )
 
-        manager.cursorHighlightEnabled = false
-        XCTAssertFalse(
-            manager.cursorHighlightAvailable,
-            "cursorHighlightAvailable should be false when the spotlight is disabled regardless of the gate"
-        )
+        XCTAssertFalse(manager.cursorHighlightAvailable)
     }
 
-    func testCursorHighlightAvailableFalseWhenGateOnAndNoActiveOverlay() {
-        manager.cursorHighlightEnabled = true
-        manager.spotlightRequiresOverlay = true
-
-        // AppDelegate.shared is nil in unit tests, so hasAnyActiveOverlay() is false.
-        XCTAssertFalse(
-            manager.cursorHighlightAvailable,
-            "cursorHighlightAvailable should be false when spotlightRequiresOverlay is true and no overlay is active"
-        )
-    }
-
-    func testCursorHighlightAvailableTrueWhenGateOnAndOverlayVisible() throws {
+    func testCursorHighlightAvailableWithVisibleOverlay() throws {
         let appDelegate = MockAppDelegate()
         let screen = try XCTUnwrap(NSScreen.main)
         let overlayWindow = OverlayWindow(
@@ -147,7 +110,6 @@ final class CursorHighlightManagerTests: XCTestCase {
 
         withExtendedLifetime(appDelegate) {
             manager.cursorHighlightEnabled = true
-            manager.spotlightRequiresOverlay = true
 
             XCTAssertTrue(
                 manager.cursorHighlightAvailable,
@@ -338,13 +300,6 @@ final class CursorHighlightManagerTests: XCTestCase {
         wait(for: [expectation], timeout: 1.0)
     }
 
-    func testSettingSpotlightRequiresOverlayPostsNotification() {
-        let expectation = expectation(forNotification: .cursorHighlightStateChanged, object: nil)
-
-        manager.spotlightRequiresOverlay = true
-
-        wait(for: [expectation], timeout: 1.0)
-    }
 
     func testSettingEffectSizePostsNotification() {
         let expectation = expectation(forNotification: .cursorHighlightStateChanged, object: nil)

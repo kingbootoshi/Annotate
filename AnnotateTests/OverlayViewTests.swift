@@ -45,6 +45,28 @@ final class OverlayViewTests: XCTestCase, Sendable {
         XCTAssertNil(overlayView.currentTextAnnotation)
     }
 
+    func testFreehandStrokeLifecyclePreservesEveryPoint() {
+        let points = [
+            TimedPoint(point: NSPoint(x: 10, y: 10), timestamp: 1),
+            TimedPoint(point: NSPoint(x: 20, y: 15), timestamp: 2),
+            TimedPoint(point: NSPoint(x: 30, y: 25), timestamp: 3),
+        ]
+        let stroke = DrawingPath(
+            points: [points[0]],
+            color: .systemRed,
+            lineWidth: 3
+        )
+
+        overlayView.beginFreehandStroke(stroke, tool: .pen)
+        overlayView.appendFreehandPoint(points[1], tool: .pen)
+        overlayView.appendFreehandPoint(points[2], tool: .pen)
+
+        let completedStroke = overlayView.endFreehandStroke(tool: .pen)
+
+        XCTAssertEqual(completedStroke?.points.map(\.point), points.map(\.point))
+        XCTAssertNil(overlayView.currentPath)
+    }
+
     func testToolSwitching() {
         // Test all tool types
         overlayView.currentTool = .pen

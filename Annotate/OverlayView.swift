@@ -77,6 +77,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
 
     var highlightPaths: [DrawingPath] = []
     var currentHighlight: DrawingPath?
+    private var currentPathBezier: NSBezierPath?
+    private var currentHighlightBezier: NSBezierPath?
 
     var rectangles: [Rectangle] = []
     var currentRectangle: Rectangle?
@@ -537,31 +539,98 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
     }
 
+    func beginFreehandStroke(_ stroke: DrawingPath, tool: ToolType) {
+        let bezier = makeBezierPath(points: stroke.points)
+        switch tool {
+        case .pen:
+            currentPath = stroke
+            currentPathBezier = bezier
+        case .highlighter:
+            currentHighlight = stroke
+            currentHighlightBezier = bezier
+        default:
+            preconditionFailure("Freehand strokes require pen or highlighter")
+        }
+    }
+
+    func appendFreehandPoint(_ point: TimedPoint, tool: ToolType) {
+        switch tool {
+        case .pen:
+            precondition(currentPath != nil && currentPathBezier != nil)
+            currentPath?.points.append(point)
+            currentPathBezier?.line(to: point.point)
+        case .highlighter:
+            precondition(currentHighlight != nil && currentHighlightBezier != nil)
+            currentHighlight?.points.append(point)
+            currentHighlightBezier?.line(to: point.point)
+        default:
+            preconditionFailure("Freehand strokes require pen or highlighter")
+        }
+    }
+
+    func rebuildCurrentFreehandStroke(tool: ToolType) {
+        switch tool {
+        case .pen:
+            currentPathBezier = currentPath.map { makeBezierPath(points: $0.points) }
+        case .highlighter:
+            currentHighlightBezier = currentHighlight.map { makeBezierPath(points: $0.points) }
+        default:
+            preconditionFailure("Freehand strokes require pen or highlighter")
+        }
+    }
+
+    func endFreehandStroke(tool: ToolType) -> DrawingPath? {
+        switch tool {
+        case .pen:
+            let stroke = currentPath
+            currentPath = nil
+            currentPathBezier = nil
+            return stroke
+        case .highlighter:
+            let stroke = currentHighlight
+            currentHighlight = nil
+            currentHighlightBezier = nil
+            return stroke
+        default:
+            preconditionFailure("Freehand strokes require pen or highlighter")
+        }
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let now = CACurrentMediaTime()
+        let now = fadeMode ? CACurrentMediaTime() : 0
 
         // Draw arrows
-        var aliveArrows: [Arrow] = []
-        for arrow in arrows {
-            if fadeMode, let creationTime = arrow.creationTime {
-                let age = now - creationTime
-                if age < fadeDuration {
-                    let alpha = alphaForAge(age)
+        if fadeMode {
+            var aliveArrows: [Arrow] = []
+            for arrow in arrows {
+                if let creationTime = arrow.creationTime {
+                    let age = now - creationTime
+                    if age < fadeDuration {
+                        let alpha = alphaForAge(age)
+                        drawArrow(
+                            from: arrow.startPoint,
+                            to: arrow.endPoint,
+                            color: arrow.color.withAlphaComponent(alpha),
+                            lineWidth: arrow.lineWidth
+                        )
+                        aliveArrows.append(arrow)
+                    }
+                } else {
                     drawArrow(
-                        from: arrow.startPoint,
-                        to: arrow.endPoint,
-                        color: arrow.color.withAlphaComponent(alpha),
-                        lineWidth: arrow.lineWidth
-                    )
+                        from: arrow.startPoint, to: arrow.endPoint, color: arrow.color,
+                        lineWidth: arrow.lineWidth)
                     aliveArrows.append(arrow)
                 }
-            } else {
-                drawArrow(from: arrow.startPoint, to: arrow.endPoint, color: arrow.color, lineWidth: arrow.lineWidth)
-                aliveArrows.append(arrow)
+            }
+            arrows = aliveArrows
+        } else {
+            for arrow in arrows {
+                drawArrow(
+                    from: arrow.startPoint, to: arrow.endPoint, color: arrow.color,
+                    lineWidth: arrow.lineWidth)
             }
         }
-        arrows = aliveArrows
 
         // Draw current arrow being drawn
         if let arrow = currentArrow {
@@ -569,26 +638,36 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw lines
-        var aliveLines: [Line] = []
-        for line in lines {
-            if fadeMode, let creationTime = line.creationTime {
-                let age = now - creationTime
-                if age < fadeDuration {
-                    let alpha = alphaForAge(age)
+        if fadeMode {
+            var aliveLines: [Line] = []
+            for line in lines {
+                if let creationTime = line.creationTime {
+                    let age = now - creationTime
+                    if age < fadeDuration {
+                        let alpha = alphaForAge(age)
+                        drawLine(
+                            from: line.startPoint,
+                            to: line.endPoint,
+                            color: line.color.withAlphaComponent(alpha),
+                            lineWidth: line.lineWidth
+                        )
+                        aliveLines.append(line)
+                    }
+                } else {
                     drawLine(
-                        from: line.startPoint,
-                        to: line.endPoint,
-                        color: line.color.withAlphaComponent(alpha),
-                        lineWidth: line.lineWidth
-                    )
+                        from: line.startPoint, to: line.endPoint, color: line.color,
+                        lineWidth: line.lineWidth)
                     aliveLines.append(line)
                 }
-            } else {
-                drawLine(from: line.startPoint, to: line.endPoint, color: line.color, lineWidth: line.lineWidth)
-                aliveLines.append(line)
+            }
+            lines = aliveLines
+        } else {
+            for line in lines {
+                drawLine(
+                    from: line.startPoint, to: line.endPoint, color: line.color,
+                    lineWidth: line.lineWidth)
             }
         }
-        lines = aliveLines
 
         // Draw current line being drawn
         if let line = currentLine {
@@ -596,84 +675,96 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw existing paths
-        var alivePaths: [DrawingPath] = []
-        for path in paths {
-            if fadeMode {
+        if fadeMode {
+            var alivePaths: [DrawingPath] = []
+            for path in paths {
                 let pathRemaining = drawPathWithFading(path, now: now, isHighlighter: false)
                 if !pathRemaining.isEmpty {
                     var newPath = path
                     newPath.points = pathRemaining
                     alivePaths.append(newPath)
                 }
-            } else {
+            }
+            paths = alivePaths
+        } else {
+            for path in paths {
                 drawPath(path, tool: .pen)
-                alivePaths.append(path)
             }
         }
-        paths = alivePaths
 
         if let path = currentPath {
-            drawPath(path, tool: .pen)
+            drawPath(path, tool: .pen, bezierPath: currentPathBezier)
         }
 
         // Draw highlighter paths
-        var aliveHighlights: [DrawingPath] = []
-        for path in highlightPaths {
-            if fadeMode {
+        if fadeMode {
+            var aliveHighlights: [DrawingPath] = []
+            for path in highlightPaths {
                 let pathRemaining = drawPathWithFading(path, now: now, isHighlighter: true)
                 if !pathRemaining.isEmpty {
                     var newHighlight = path
                     newHighlight.points = pathRemaining
                     aliveHighlights.append(newHighlight)
                 }
-            } else {
+            }
+            highlightPaths = aliveHighlights
+        } else {
+            for path in highlightPaths {
                 drawPath(path, tool: .highlighter)
-                aliveHighlights.append(path)
             }
         }
-        highlightPaths = aliveHighlights
 
         if let highlight = currentHighlight {
-            drawPath(highlight, tool: .highlighter)
+            drawPath(highlight, tool: .highlighter, bezierPath: currentHighlightBezier)
         }
 
         // Draw rectangles
-        var aliveRects: [Rectangle] = []
-        for rect in rectangles {
-            if fadeMode, let creationTime = rect.creationTime {
-                let age = now - creationTime
-                if age < fadeDuration {
-                    let alpha = alphaForAge(age)
-                    drawRectangle(rect, alpha: alpha)
+        if fadeMode {
+            var aliveRects: [Rectangle] = []
+            for rect in rectangles {
+                if let creationTime = rect.creationTime {
+                    let age = now - creationTime
+                    if age < fadeDuration {
+                        drawRectangle(rect, alpha: alphaForAge(age))
+                        aliveRects.append(rect)
+                    }
+                } else {
+                    drawRectangle(rect, alpha: 1.0)
                     aliveRects.append(rect)
                 }
-            } else {
+            }
+            rectangles = aliveRects
+        } else {
+            for rect in rectangles {
                 drawRectangle(rect, alpha: 1.0)
-                aliveRects.append(rect)
             }
         }
-        rectangles = aliveRects
 
         if let rectangle = currentRectangle {
             drawRectangle(rectangle, alpha: 1.0)
         }
 
         // Draw circles
-        var aliveCircles: [Circle] = []
-        for circle in circles {
-            if fadeMode, let creationTime = circle.creationTime {
-                let age = now - creationTime
-                if age < fadeDuration {
-                    let alpha = alphaForAge(age)
-                    drawCircle(circle, alpha: alpha)
+        if fadeMode {
+            var aliveCircles: [Circle] = []
+            for circle in circles {
+                if let creationTime = circle.creationTime {
+                    let age = now - creationTime
+                    if age < fadeDuration {
+                        drawCircle(circle, alpha: alphaForAge(age))
+                        aliveCircles.append(circle)
+                    }
+                } else {
+                    drawCircle(circle, alpha: 1.0)
                     aliveCircles.append(circle)
                 }
-            } else {
+            }
+            circles = aliveCircles
+        } else {
+            for circle in circles {
                 drawCircle(circle, alpha: 1.0)
-                aliveCircles.append(circle)
             }
         }
-        circles = aliveCircles
 
         if let circle = currentCircle {
             drawCircle(circle, alpha: 1.0)
@@ -685,21 +776,26 @@ class OverlayView: NSView, NSTextFieldDelegate {
             drawText(annotation)
         }
 
-        var aliveCounters: [CounterAnnotation] = []
-        for counter in counterAnnotations {
-            if fadeMode, let creationTime = counter.creationTime {
-                let age = now - creationTime
-                if age < fadeDuration {
-                    let alpha = alphaForAge(age)
-                    drawCounter(counter, alpha: alpha)
+        if fadeMode {
+            var aliveCounters: [CounterAnnotation] = []
+            for counter in counterAnnotations {
+                if let creationTime = counter.creationTime {
+                    let age = now - creationTime
+                    if age < fadeDuration {
+                        drawCounter(counter, alpha: alphaForAge(age))
+                        aliveCounters.append(counter)
+                    }
+                } else {
+                    drawCounter(counter, alpha: 1.0)
                     aliveCounters.append(counter)
                 }
-            } else {
+            }
+            counterAnnotations = aliveCounters
+        } else {
+            for counter in counterAnnotations {
                 drawCounter(counter, alpha: 1.0)
-                aliveCounters.append(counter)
             }
         }
-        counterAnnotations = aliveCounters
         
         // Draw selection bounding box for all selected objects
         if !selectedObjects.isEmpty {
@@ -1003,24 +1099,32 @@ class OverlayView: NSView, NSTextFieldDelegate {
         needsDisplay = true
     }
 
-    private func drawPath(_ path: DrawingPath, tool: ToolType) {
+    private func makeBezierPath(points: [TimedPoint]) -> NSBezierPath {
+        let bezierPath = NSBezierPath()
+        guard let firstPoint = points.first else { return bezierPath }
+
+        bezierPath.move(to: firstPoint.point)
+        for timedPoint in points.dropFirst() {
+            bezierPath.line(to: timedPoint.point)
+        }
+        return bezierPath
+    }
+
+    private func drawPath(
+        _ path: DrawingPath,
+        tool: ToolType,
+        bezierPath: NSBezierPath? = nil
+    ) {
         guard !path.points.isEmpty else { return }
 
         let adaptedColor = adaptColorForBoard(path.color, boardType: currentBoardType)
-
-        let bezierPath = NSBezierPath()
-        bezierPath.move(to: path.points[0].point)
-
-        for timedPoint in path.points.dropFirst() {
-            bezierPath.line(to: timedPoint.point)
-        }
+        let renderedPath = bezierPath ?? makeBezierPath(points: path.points)
 
         adaptedColor.withAlphaComponent(tool.laydownAlpha).setStroke()
-        bezierPath.lineWidth = path.lineWidth * tool.strokeWidthMultiplier
-
-        bezierPath.lineJoinStyle = .round
-        bezierPath.lineCapStyle = .round
-        bezierPath.stroke()
+        renderedPath.lineWidth = path.lineWidth * tool.strokeWidthMultiplier
+        renderedPath.lineJoinStyle = .round
+        renderedPath.lineCapStyle = .round
+        renderedPath.stroke()
     }
 
     private func drawText(_ annotation: TextAnnotation) {
@@ -1123,6 +1227,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
             currentLine = nil
             currentPath = nil
             currentHighlight = nil
+            currentPathBezier = nil
+            currentHighlightBezier = nil
             currentRectangle = nil
             currentCircle = nil
             currentTextAnnotation = nil

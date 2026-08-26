@@ -28,6 +28,7 @@ class OverlayWindow: NSPanel {
     private let helpBarModel = HelpBarModel()
     private var isHelpBarGestureActive = false
     private var feedbackRemovalTask: DispatchWorkItem?
+    private var restoresMouseCoalescing = false
     
     // Create undo manager for this window
     private let _undoManager = UndoManager()
@@ -91,6 +92,11 @@ class OverlayWindow: NSPanel {
 
         self.contentView = containerView
         installHelpBar(in: containerView)
+    }
+
+    override func orderOut(_ sender: Any?) {
+        restoreMouseCoalescing()
+        super.orderOut(sender)
     }
 
     private func installHelpBar(in container: NSView) {
@@ -497,11 +503,15 @@ class OverlayWindow: NSPanel {
 
         switch overlayView.currentTool {
         case .pen:
-            let t = CACurrentMediaTime()
-            overlayView.currentPath = DrawingPath(
-                points: [TimedPoint(point: startPoint, timestamp: t)],
-                color: currentColor,
-                lineWidth: overlayView.currentLineWidth)
+            beginUncoalescedFreehandInput()
+            let t = event.timestamp
+            overlayView.beginFreehandStroke(
+                DrawingPath(
+                    points: [TimedPoint(point: startPoint, timestamp: t)],
+                    color: currentColor,
+                    lineWidth: overlayView.currentLineWidth),
+                tool: .pen
+            )
         case .arrow:
             overlayView.currentArrow = Arrow(
                 startPoint: startPoint, endPoint: startPoint, color: currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
@@ -509,11 +519,15 @@ class OverlayWindow: NSPanel {
             overlayView.currentLine = Line(
                 startPoint: startPoint, endPoint: startPoint, color: currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
         case .highlighter:
-            let t = CACurrentMediaTime()
-            overlayView.currentHighlight = DrawingPath(
-                points: [TimedPoint(point: startPoint, timestamp: t)],
-                color: currentColor.withAlphaComponent(0.3),
-                lineWidth: overlayView.currentLineWidth)
+            beginUncoalescedFreehandInput()
+            let t = event.timestamp
+            overlayView.beginFreehandStroke(
+                DrawingPath(
+                    points: [TimedPoint(point: startPoint, timestamp: t)],
+                    color: currentColor.withAlphaComponent(0.3),
+                    lineWidth: overlayView.currentLineWidth),
+                tool: .highlighter
+            )
         case .rectangle:
             overlayView.currentRectangle = Rectangle(
                 startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
@@ -599,7 +613,7 @@ class OverlayWindow: NSPanel {
 
         switch overlayView.currentTool {
         case .pen:
-            let t = CACurrentMediaTime()
+            let t = event.timestamp
             let prev = overlayView.currentPath?.points.last?.point ?? currentPoint
             if isShiftConstraintActive {
                 updatePathWithShiftConstraint(
@@ -607,13 +621,16 @@ class OverlayWindow: NSPanel {
                     to: currentPoint,
                     timestamp: t
                 )
+                overlayView.rebuildCurrentFreehandStroke(tool: .pen)
                 overlayView.needsDisplay = true
             } else {
-                overlayView.currentPath?.points.append(TimedPoint(point: currentPoint, timestamp: t))
+                overlayView.appendFreehandPoint(
+                    TimedPoint(point: currentPoint, timestamp: t),
+                    tool: .pen)
                 invalidateLiveSegment(from: prev, to: currentPoint, pad: overlayView.currentLineWidth + 6)
             }
         case .highlighter:
-            let t = CACurrentMediaTime()
+            let t = event.timestamp
             let prev = overlayView.currentHighlight?.points.last?.point ?? currentPoint
             if isShiftConstraintActive {
                 updatePathWithShiftConstraint(
@@ -621,10 +638,12 @@ class OverlayWindow: NSPanel {
                     to: currentPoint,
                     timestamp: t
                 )
+                overlayView.rebuildCurrentFreehandStroke(tool: .highlighter)
                 overlayView.needsDisplay = true
             } else {
-                overlayView.currentHighlight?.points.append(
-                    TimedPoint(point: currentPoint, timestamp: t))
+                overlayView.appendFreehandPoint(
+                    TimedPoint(point: currentPoint, timestamp: t),
+                    tool: .highlighter)
                 invalidateLiveSegment(
                     from: prev, to: currentPoint,
                     pad: overlayView.currentLineWidth
@@ -708,6 +727,18 @@ class OverlayWindow: NSPanel {
         overlayView.setNeedsDisplay(rectSpanning(from, to, pad: pad))
     }
 
+    private func beginUncoalescedFreehandInput() {
+        guard !restoresMouseCoalescing, NSEvent.isMouseCoalescingEnabled else { return }
+        NSEvent.isMouseCoalescingEnabled = false
+        restoresMouseCoalescing = true
+    }
+
+    private func restoreMouseCoalescing() {
+        guard restoresMouseCoalescing else { return }
+        NSEvent.isMouseCoalescingEnabled = true
+        restoresMouseCoalescing = false
+    }
+
     private func invalidateLiveShape(_ rect: NSRect) {
         let dirty = lastLiveShapeRect.map { $0.union(rect) } ?? rect
         overlayView.setNeedsDisplay(dirty)
@@ -715,6 +746,7 @@ class OverlayWindow: NSPanel {
     }
 
     override func mouseUp(with event: NSEvent) {
+        restoreMouseCoalescing()
         if isHelpBarGestureActive {
             isHelpBarGestureActive = false
             return
@@ -794,22 +826,17 @@ class OverlayWindow: NSPanel {
 
         switch overlayView.currentTool {
         case .pen:
-            if var currentPath = overlayView.currentPath {
-                let finalTime = CACurrentMediaTime()
-                // Find the oldest point’s timestamp
-                guard let minTimestamp = currentPath.points.map({ $0.timestamp }).min() else {
+            if var currentPath = overlayView.endFreehandStroke(tool: .pen) {
+                let finalTime = event.timestamp
+                guard let minTimestamp = currentPath.points.first?.timestamp else {
                     return
                 }
-                var updatedPoints = currentPath.points
-                // Shift each point so that the oldest is effectively 0 at mouseUp
                 let offset = finalTime - minTimestamp
-                for i in 0..<updatedPoints.count {
-                    updatedPoints[i].timestamp += offset
+                for i in currentPath.points.indices {
+                    currentPath.points[i].timestamp += offset
                 }
-                currentPath.points = updatedPoints
                 overlayView.registerUndo(action: .addPath(currentPath))
                 overlayView.paths.append(currentPath)
-                overlayView.currentPath = nil
             }
         case .arrow:
             if var currentArrow = overlayView.currentArrow {
@@ -826,22 +853,17 @@ class OverlayWindow: NSPanel {
                 overlayView.currentLine = nil
             }
         case .highlighter:
-            if var currentHighlight = overlayView.currentHighlight {
-                let finalTime = CACurrentMediaTime()
-                // Find the oldest point’s timestamp
-                guard let minTimestamp = currentHighlight.points.map({ $0.timestamp }).min() else {
+            if var currentHighlight = overlayView.endFreehandStroke(tool: .highlighter) {
+                let finalTime = event.timestamp
+                guard let minTimestamp = currentHighlight.points.first?.timestamp else {
                     return
                 }
-                var updatedPoints = currentHighlight.points
-                // Shift each point so that the oldest is effectively 0 at mouseUp
                 let offset = finalTime - minTimestamp
-                for i in 0..<updatedPoints.count {
-                    updatedPoints[i].timestamp += offset
+                for i in currentHighlight.points.indices {
+                    currentHighlight.points[i].timestamp += offset
                 }
-                currentHighlight.points = updatedPoints
                 overlayView.registerUndo(action: .addHighlight(currentHighlight))
                 overlayView.highlightPaths.append(currentHighlight)
-                overlayView.currentHighlight = nil
             }
         case .rectangle:
             if var currentRectangle = overlayView.currentRectangle {
@@ -880,6 +902,9 @@ class OverlayWindow: NSPanel {
     override func keyDown(with event: NSEvent) {
         let cmdPressed = event.modifierFlags.contains(.command)
         let key = event.characters?.lowercased() ?? ""
+        if event.keyCode == 53 {
+            restoreMouseCoalescing()
+        }
 
         if event.modifierFlags.contains(.option),
             event.charactersIgnoringModifiers?.lowercased() == "h"

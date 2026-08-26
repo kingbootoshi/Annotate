@@ -104,6 +104,36 @@ final class OverlayWindowTests: XCTestCase, Sendable {
         window.mouseUp(with: mouseUpEvent!)
     }
 
+    func testFreehandInputDisablesCoalescingOnlyDuringGesture() {
+        let originalValue = NSEvent.isMouseCoalescingEnabled
+        NSEvent.isMouseCoalescingEnabled = true
+        defer { NSEvent.isMouseCoalescingEnabled = originalValue }
+
+        window.overlayView.currentTool = .pen
+        let mouseDown = TestEvents.createMouseEvent(
+            type: .leftMouseDown,
+            location: NSPoint(x: 100, y: 100)
+        )!
+        let dragEvents = (1...256).map { index in
+            TestEvents.createMouseEvent(
+                type: .leftMouseDragged,
+                location: NSPoint(x: 100 + index, y: 100 + index % 17)
+            )!
+        }
+        let mouseUp = TestEvents.createMouseEvent(
+            type: .leftMouseUp,
+            location: dragEvents.last!.locationInWindow
+        )!
+
+        window.mouseDown(with: mouseDown)
+        XCTAssertFalse(NSEvent.isMouseCoalescingEnabled)
+        dragEvents.forEach { window.mouseDragged(with: $0) }
+
+        window.mouseUp(with: mouseUp)
+        XCTAssertTrue(NSEvent.isMouseCoalescingEnabled)
+        XCTAssertEqual(window.overlayView.paths.last?.points.count, 257)
+    }
+
     func testKeyEvents() {
         // Test ESC key
         let escEvent = TestEvents.createKeyEvent(type: .keyDown, keyCode: 53)
