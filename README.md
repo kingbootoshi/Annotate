@@ -7,6 +7,9 @@
   <strong>A lightweight, keyboard-driven screen annotation tool for macOS that allows you to quickly draw, highlight, and annotate anything on your screen.</strong>
 </p>
 
+> [!IMPORTANT]
+> This is [kingbootoshi's](https://github.com/kingbootoshi) fully-offline fork of [epilande/Annotate](https://github.com/epilande/Annotate) (branch `local-offline`). All auto-update machinery (Sparkle) is removed - the app makes zero network connections. It adds custom per-tool cursors (ink-nib brush, screenshot-style crosshair for shapes), a brush cursor style with size control, a default ⌘⇧A overlay hotkey, and a refreshed menu bar icon. Install by building from source below. For the original signed/notarized releases with auto-updates, use the upstream repo.
+
 ![annotate](https://github.com/user-attachments/assets/16baefb6-9fad-4702-9233-2991992ad030)
 
 ## ❓ Why?
@@ -38,52 +41,16 @@ Sometimes you need to emphasize a part of your screen or share ideas visually, a
 - 🧹 **Auto-Clear Option:** Automatically clear all drawings when toggling the overlay.
 - ⌨️ **Keyboard Shortcuts:** Switch between modes and toggle the overlay with customizable keyboard shortcuts.
 - ⚡ **Global Hotkey:** Toggle Annotate with a global shortcut.
-- 🔄 **Auto-Updates:** Automatic update checking with secure, cryptographically signed updates.
+- 📴 **Fully Offline:** No update checks, no telemetry, zero network connections (fork).
 
 ## 📦 Installation
 
-### Download Release
-
-1. **Download the Application:**
-
-   - Go to [latest release](https://github.com/epilande/Annotate/releases/latest) page.
-   - Download the `Annotate-x.x.x.dmg` file for easy installation, or `Annotate-x.x.x.zip` for manual installation.
-
-2. **Install the Application:**
-
-   **Using DMG (Recommended):**
-
-   - Open the downloaded `Annotate-x.x.x.dmg` file.
-   - Drag the `Annotate.app` into your **Applications** folder.
-
-   **Using ZIP:**
-
-   - Unzip the downloaded `Annotate-x.x.x.zip` file.
-   - Drag the `Annotate.app` file into your **Applications** folder.
-
-3. **Run the Application:**
-
-   - Open your **Applications** folder and double-click `Annotate.app` to launch it.
-
-> [!NOTE]
-> Requires macOS 14 (Sonoma) or later. Supports both Apple Silicon and Intel Macs.
->
-> The app is code-signed and notarized for macOS Gatekeeper compatibility.
-
-### Homebrew
-
-Install via [Homebrew Cask](https://formulae.brew.sh/cask/annotate):
-
-```sh
-brew install --cask annotate
-```
-
-### Build from Source
+### Build from Source (only install path for this fork)
 
 1. **Clone the Repository:**
 
    ```sh
-   git clone https://github.com/epilande/Annotate
+   git clone https://github.com/kingbootoshi/Annotate
    ```
 
 2. **Open the Project in Xcode:**
@@ -94,8 +61,23 @@ brew install --cask annotate
    ```
 
 3. **Build and Run:**
-   - Ensure you have the latest version of Xcode installed.
-   - Select your target macOS version, then build and run the project in Xcode.
+   - Ensure you have the latest version of Xcode installed (project is generated with [XcodeGen](https://github.com/yonaskolb/XcodeGen): run `xcodegen generate` if `Annotate.xcodeproj` is missing).
+   - Select "Sign to Run Locally" (ad-hoc) as the signing option, then build and run.
+
+   Or from the terminal:
+
+   ```sh
+   xcodegen generate
+   xcodebuild -project Annotate.xcodeproj -scheme Annotate -configuration Release \
+     -derivedDataPath build CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES build
+   cp -R build/Build/Products/Release/Annotate.app /Applications/
+   codesign --force --deep -s - /Applications/Annotate.app
+   ```
+
+> [!NOTE]
+> Requires macOS 14 (Sonoma) or later.
+>
+> This fork is ad-hoc signed (not notarized). macOS re-prompts Screen Recording/Accessibility permissions after each rebuild because the code identity changes. If you share the built app as a zip, recipients must right-click → Open (or `xattr -d com.apple.quarantine`) to pass Gatekeeper.
 
 ## 🚀 Quick Start
 
@@ -360,12 +342,6 @@ Customize single-key shortcuts for tools and utilities, organized into categorie
   <img width="700" alt="Annotate settings window" src="https://github.com/user-attachments/assets/10958639-d83e-40c6-876b-c975003dec6f" />
 </picture>
 
-## 🔄 Auto-Updates
+## 📴 Offline by Design
 
-Annotate includes automatic update checking powered by [Sparkle](https://sparkle-project.org/):
-
-- **Automatic Checks**: The app checks for updates once per day.
-- **Manual Check**: Select **Check for Updates...** from the menu bar or use the About window.
-- **Secure Updates**: All updates are cryptographically signed and verified before installation.
-
-Updates are downloaded and installed seamlessly in the background. You'll be notified when a new version is available, with release notes and the option to install immediately or later.
+This fork removes the Sparkle auto-update framework entirely - no update checks, no downloader XPC services, no network entitlements. The app cannot and will not phone home. To get new features, pull the repo and rebuild.

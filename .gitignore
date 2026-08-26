@@ -45,3 +45,6 @@ bin/
 test_*
 sfx-candidates/
 design-catalogue/
+
+# local research scratch
+sound-lab/
