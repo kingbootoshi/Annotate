@@ -2,7 +2,7 @@ import Cocoa
 import KeyboardShortcuts
 
 extension KeyboardShortcuts.Name {
-    static let toggleOverlay = Self("toggleOverlay")
+    static let toggleOverlay = Self("toggleOverlay", default: .init(.a, modifiers: [.command, .shift]))
     static let toggleAlwaysOnMode = Self("toggleAlwaysOnMode")
 }
 
