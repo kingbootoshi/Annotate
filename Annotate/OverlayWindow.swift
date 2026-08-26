@@ -148,6 +148,11 @@ class OverlayWindow: NSPanel {
         return host.frame.contains(container.convert(windowPoint, from: nil))
     }
 
+    var helpBarClearance: CGFloat {
+        guard let host = helpBarHost, !host.isHidden else { return 0 }
+        return host.frame.maxY
+    }
+
     private func handleHelpBarAction(_ action: HelpBarAction) {
         switch action {
         case .tool(let tool):
@@ -225,10 +230,13 @@ class OverlayWindow: NSPanel {
     func beginQuickPicker(_ mode: QuickPickerView.Mode) {
         guard quickPicker == nil else { return }
         let anchor = overlayView.convert(mouseLocationOutsideOfEventStream, from: nil)
+        var placementBounds = overlayView.bounds
+        placementBounds.origin.y += helpBarClearance
+        placementBounds.size.height -= helpBarClearance
         let picker = QuickPickerView(
             mode: mode,
             anchor: anchor,
-            within: overlayView.bounds,
+            within: placementBounds,
             currentColor: overlayView.currentColor,
             currentWidth: overlayView.currentLineWidth
         )
@@ -1398,7 +1406,7 @@ class OverlayWindow: NSPanel {
         height: CGFloat,
         lineWidth: CGFloat?
     ) -> NSRect {
-        let bottomPadding: CGFloat = 20
+        let bottomPadding: CGFloat = helpBarClearance > 0 ? helpBarClearance + 8 : 20
         let extraLinePadding = lineWidth != nil ? max(0, lineWidth! / 2) : 0
         
         return NSRect(
