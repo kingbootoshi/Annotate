@@ -250,6 +250,9 @@ class CursorHighlightManager: @unchecked Sendable {
 
     /// Called when overlay visibility changes to trigger cursor updates
     func overlayVisibilityChanged() {
+        if !hasAnyActiveOverlay() {
+            releaseAnimation = nil
+        }
         notifyStateChanged()
     }
 
