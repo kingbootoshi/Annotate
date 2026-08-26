@@ -4,9 +4,11 @@ final class QuickPickerView: NSView {
     enum Mode {
         case color
         case width
+        case fontSize
     }
 
     static let widthOptions: [CGFloat] = [1, 2, 3, 5, 8, 12, 16, 24]
+    static let fontSizeOptions: [CGFloat] = [14, 18, 24, 32, 44, 60, 80, 110]
 
     let mode: Mode
     private(set) var selectedIndex: Int
@@ -24,21 +26,35 @@ final class QuickPickerView: NSView {
         return Self.widthOptions[selectedIndex]
     }
 
-    private var itemCount: Int {
-        mode == .color ? colorPalette.count : Self.widthOptions.count
+    var selectedFontSize: CGFloat? {
+        guard mode == .fontSize, Self.fontSizeOptions.indices.contains(selectedIndex) else { return nil }
+        return Self.fontSizeOptions[selectedIndex]
     }
 
-    init(mode: Mode, anchor: NSPoint, within bounds: NSRect, currentColor: NSColor, currentWidth: CGFloat) {
+    private var options: [CGFloat] {
+        mode == .fontSize ? Self.fontSizeOptions : Self.widthOptions
+    }
+
+    private var itemCount: Int {
+        mode == .color ? colorPalette.count : options.count
+    }
+
+    init(
+        mode: Mode, anchor: NSPoint, within bounds: NSRect, currentColor: NSColor,
+        currentWidth: CGFloat, currentFontSize: CGFloat = defaultTextAnnotationFontSize
+    ) {
         self.mode = mode
         switch mode {
         case .color:
             selectedIndex = colorPalette.firstIndex { $0.isClose(to: currentColor) } ?? 0
-        case .width:
-            let distances = Self.widthOptions.map { abs($0 - currentWidth) }
+        case .width, .fontSize:
+            let current = mode == .width ? currentWidth : currentFontSize
+            let choices = mode == .fontSize ? Self.fontSizeOptions : Self.widthOptions
+            let distances = choices.map { abs($0 - current) }
             selectedIndex = distances.firstIndex(of: distances.min() ?? 0) ?? 0
         }
 
-        let count = mode == .color ? colorPalette.count : Self.widthOptions.count
+        let count = mode == .color ? colorPalette.count : (mode == .fontSize ? Self.fontSizeOptions.count : Self.widthOptions.count)
         let size = NSSize(
             width: padding * 2 + cellSize * CGFloat(count),
             height: cellSize + padding * 2
@@ -89,6 +105,8 @@ final class QuickPickerView: NSView {
                 drawColorCell(colorPalette[index], in: cellRect, selected: isSelected)
             case .width:
                 drawWidthCell(Self.widthOptions[index], in: cellRect, selected: isSelected)
+            case .fontSize:
+                drawFontSizeCell(Self.fontSizeOptions[index], in: cellRect, selected: isSelected)
             }
         }
     }
@@ -115,6 +133,24 @@ final class QuickPickerView: NSView {
 
         if selected {
             let ring = centeredCircle(in: rect, diameter: min(diameter + 8, 44))
+            NSColor.white.setStroke()
+            ring.lineWidth = 2
+            ring.stroke()
+        }
+    }
+
+    private func drawFontSizeCell(_ size: CGFloat, in rect: NSRect, selected: Bool) {
+        let glyphSize = min(10 + size * 0.28, 40)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: glyphSize, weight: .bold),
+            .foregroundColor: selected ? NSColor.white : NSColor(white: 0.85, alpha: 0.9),
+        ]
+        let glyph = NSAttributedString(string: "A", attributes: attributes)
+        let glyphBounds = glyph.size()
+        glyph.draw(at: NSPoint(x: rect.midX - glyphBounds.width / 2, y: rect.midY - glyphBounds.height / 2))
+
+        if selected {
+            let ring = centeredCircle(in: rect, diameter: 44)
             NSColor.white.setStroke()
             ring.lineWidth = 2
             ring.stroke()

@@ -248,7 +248,9 @@ class CursorHighlightManager: @unchecked Sendable {
 
     var isActive: Bool { clickEffectsEnabled && hasAnyActiveOverlay() }
 
-    var shouldShowRing: Bool { isActive && isMouseDown && toolCursorKind == .system }
+    var shouldShowRing: Bool {
+        isActive && isMouseDown && toolCursorKind == .system && activeTool != .text
+    }
 
     /// Effects are structurally overlay-gated: nothing renders unless an overlay is visible (ADR-0001).
     var cursorHighlightAvailable: Bool {
@@ -256,7 +258,7 @@ class CursorHighlightManager: @unchecked Sendable {
     }
 
     var shouldShowCursorHighlight: Bool {
-        cursorHighlightAvailable && !isMouseDown && toolCursorKind == .system
+        cursorHighlightAvailable && !isMouseDown && toolCursorKind == .system && activeTool != .text
     }
 
     var hasActiveAnimation: Bool {

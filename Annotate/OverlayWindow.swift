@@ -227,8 +227,10 @@ class OverlayWindow: NSPanel {
 
     func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    func beginQuickPicker(_ mode: QuickPickerView.Mode) {
+    func beginQuickPicker(_ requestedMode: QuickPickerView.Mode) {
         guard quickPicker == nil else { return }
+        let mode: QuickPickerView.Mode =
+            requestedMode == .width && overlayView.currentTool == .text ? .fontSize : requestedMode
         let anchor = overlayView.convert(mouseLocationOutsideOfEventStream, from: nil)
         var placementBounds = overlayView.bounds
         placementBounds.origin.y += helpBarClearance
@@ -238,7 +240,8 @@ class OverlayWindow: NSPanel {
             anchor: anchor,
             within: placementBounds,
             currentColor: overlayView.currentColor,
-            currentWidth: overlayView.currentLineWidth
+            currentWidth: overlayView.currentLineWidth,
+            currentFontSize: UserDefaults.standard.textToolFontSize
         )
         overlayView.addSubview(picker)
         quickPicker = picker
@@ -280,6 +283,9 @@ class OverlayWindow: NSPanel {
                 String(format: "%.0f px", width),
                 lineColor: overlayView.currentColor,
                 lineWidth: width)
+        case .fontSize:
+            guard let size = picker.selectedFontSize else { return }
+            applyTextFontSize(size)
         }
     }
 
@@ -490,7 +496,8 @@ class OverlayWindow: NSPanel {
                 text: "",
                 position: startPoint,
                 color: currentColor,
-                fontSize: UserDefaults.standard.textToolFontSize
+                fontSize: UserDefaults.standard.textToolFontSize,
+                hasBackground: UserDefaults.standard.textBackgroundEnabled
             )
             overlayView.createTextField(at: startPoint)
         }
@@ -1205,23 +1212,32 @@ class OverlayWindow: NSPanel {
         let scrollDelta = event.scrollingDeltaY
         guard scrollDelta != 0 else { return }
 
-        let step: CGFloat = 1.0
-        let increment: CGFloat = scrollDelta > 0 ? step : -step
-        let currentSize = UserDefaults.standard.textToolFontSize
-        let newSize = (currentSize + increment).clamped(to: textAnnotationFontSizeRange)
+        let increment: CGFloat = scrollDelta > 0 ? 1 : -1
+        applyTextFontSize(UserDefaults.standard.textToolFontSize + increment)
+    }
 
-        guard newSize != currentSize else { return }
+    func applyTextFontSize(_ newSize: CGFloat) {
+        let clamped = newSize.clamped(to: textAnnotationFontSizeRange)
+        guard clamped != UserDefaults.standard.textToolFontSize else { return }
 
-        UserDefaults.standard.textToolFontSize = newSize
+        UserDefaults.standard.textToolFontSize = clamped
 
         if let textField = overlayView.activeTextField {
-            textField.font = NSFont.systemFont(ofSize: newSize)
-            overlayView.currentTextAnnotation?.fontSize = newSize
+            textField.font = NSFont.systemFont(ofSize: clamped)
+            overlayView.currentTextAnnotation?.fontSize = clamped
             overlayView.resizeActiveTextField(textField)
             textField.needsDisplay = true
         }
 
-        showFontSizeFeedback(newSize)
+        showFontSizeFeedback(clamped)
+    }
+
+    func toggleTextBackground() {
+        let enabled = !(overlayView.currentTextAnnotation?.hasBackground
+            ?? UserDefaults.standard.textBackgroundEnabled)
+        overlayView.currentTextAnnotation?.hasBackground = enabled
+        UserDefaults.standard.textBackgroundEnabled = enabled
+        showFeedback(enabled ? "Label Background On" : "Label Background Off")
     }
 
     private func showFontSizeFeedback(_ size: CGFloat) {

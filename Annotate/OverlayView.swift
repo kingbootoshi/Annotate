@@ -4,6 +4,8 @@ import Cocoa
 @MainActor
 class AnnotationTextField: NSTextField {
     var onCommandReturn: (() -> Void)?
+    var onFontSizeStep: ((CGFloat) -> Void)?
+    var onToggleBackground: (() -> Void)?
 
     /// The unclamped left-edge x the field targets before any right-edge shifting. Set when
     /// the field is created so that shrinking text after a left-shift can move it back toward
@@ -11,9 +13,24 @@ class AnnotationTextField: NSTextField {
     var anchorX: CGFloat = 0
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.contains(.command) && event.keyCode == 36 {
-            onCommandReturn?()
-            return true
+        if event.modifierFlags.contains(.command) {
+            if event.keyCode == 36 {
+                onCommandReturn?()
+                return true
+            }
+            switch event.charactersIgnoringModifiers {
+            case "=", "+":
+                onFontSizeStep?(4)
+                return true
+            case "-":
+                onFontSizeStep?(-4)
+                return true
+            case "b":
+                onToggleBackground?()
+                return true
+            default:
+                break
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
@@ -1014,6 +1031,20 @@ class OverlayView: NSView, NSTextFieldDelegate {
             .font: NSFont.systemFont(ofSize: annotation.fontSize),
         ]
         let attributedString = NSAttributedString(string: annotation.text, attributes: attributes)
+
+        if annotation.hasBackground {
+            let textSize = attributedString.size()
+            let pillRect = NSRect(
+                x: annotation.position.x - 8,
+                y: annotation.position.y - 4,
+                width: textSize.width + 16,
+                height: textSize.height + 8
+            )
+            let pill = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
+            adaptedColor.contrastingColor().withAlphaComponent(0.85).setFill()
+            pill.fill()
+        }
+
         attributedString.draw(at: annotation.position)
     }
 
@@ -1545,6 +1576,13 @@ class OverlayView: NSView, NSTextFieldDelegate {
             guard let self = self, let textField = textField else { return }
             self.finalizeTextAnnotation(textField)
         }
+        textField.onFontSizeStep = { [weak self] delta in
+            guard let window = self?.window as? OverlayWindow else { return }
+            window.applyTextFontSize(UserDefaults.standard.textToolFontSize + delta)
+        }
+        textField.onToggleBackground = { [weak self] in
+            (self?.window as? OverlayWindow)?.toggleTextBackground()
+        }
         activeTextField = textField
         // Remember where the field started so resize can slide it back right as text shrinks.
         textField.anchorX = textField.frame.origin.x
@@ -1644,7 +1682,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
                 text: typedText,
                 position: position,
                 color: currentText.color,
-                fontSize: currentText.fontSize
+                fontSize: currentText.fontSize,
+                hasBackground: currentText.hasBackground
             )
 
             if let editingIndex = editingTextAnnotationIndex {
@@ -1703,7 +1742,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
             text: "",
             position: point,
             color: adaptColorForBoard(currentColor, boardType: currentBoardType),
-            fontSize: UserDefaults.standard.textToolFontSize
+            fontSize: UserDefaults.standard.textToolFontSize,
+            hasBackground: UserDefaults.standard.textBackgroundEnabled
         )
         createTextField(at: point)
     }

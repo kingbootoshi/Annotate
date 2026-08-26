@@ -234,7 +234,8 @@ class CursorHighlightView: NSView {
                 outlineLayer.opacity = 0
 
             case .crosshair:
-                let size = max(24, manager.activeCursorSize * 1.6)
+                let stroke = max(manager.effectiveStrokeWidth, 2)
+                let size = max(24, manager.activeCursorSize * 1.6, stroke * 3.2)
 
                 outlineLayer.path = screenshotCrosshairPath(for: size)
                 outlineLayer.position = localPoint
@@ -243,7 +244,12 @@ class CursorHighlightView: NSView {
                 outlineLayer.lineWidth = 0.75
                 outlineLayer.opacity = 1
 
-                cursorLayer.opacity = 0
+                cursorLayer.path = inkContactDotPath(diameter: stroke)
+                cursorLayer.position = localPoint
+                cursorLayer.fillColor = manager.inkColorCG
+                cursorLayer.strokeColor = nil
+                cursorLayer.lineWidth = 0
+                cursorLayer.opacity = 1
 
             case .ring:
                 let size = max(14, manager.activeCursorSize)
