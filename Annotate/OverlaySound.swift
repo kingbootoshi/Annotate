@@ -4,12 +4,10 @@ import AVFoundation
 final class OverlaySound {
     static let shared = OverlaySound()
 
-    private let activatePlayer: AVAudioPlayer?
-    private let deactivatePlayer: AVAudioPlayer?
+    private let togglePlayer: AVAudioPlayer?
 
     private init() {
-        activatePlayer = Self.makePlayer(named: "overlay-on")
-        deactivatePlayer = Self.makePlayer(named: "overlay-off")
+        togglePlayer = Self.makePlayer(named: "overlay-toggle")
     }
 
     private static func makePlayer(named name: String) -> AVAudioPlayer? {
@@ -21,17 +19,9 @@ final class OverlaySound {
         return player
     }
 
-    func playActivate() {
-        replay(activatePlayer)
-    }
-
-    func playDeactivate() {
-        replay(deactivatePlayer)
-    }
-
-    private func replay(_ player: AVAudioPlayer?) {
-        guard let player else { return }
-        player.currentTime = 0
-        player.play()
+    func playToggle() {
+        guard let togglePlayer else { return }
+        togglePlayer.currentTime = 0
+        togglePlayer.play()
     }
 }
