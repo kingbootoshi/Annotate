@@ -71,7 +71,8 @@ Sometimes you need to emphasize a part of your screen or share ideas visually, a
    xcodebuild -project Annotate.xcodeproj -scheme Annotate -configuration Release \
      -derivedDataPath build CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES build
    cp -R build/Build/Products/Release/Annotate.app /Applications/
-   codesign --force --deep -s - /Applications/Annotate.app
+   codesign --force --deep -s - \
+     --entitlements Annotate/Annotate.entitlements /Applications/Annotate.app
    ```
 
 > [!NOTE]
