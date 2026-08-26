@@ -224,17 +224,8 @@ class CursorHighlightManager: @unchecked Sendable {
         }
     }
 
-    var holdRingMatchesStroke: Bool {
-        activeTool == .pen || activeTool == .highlighter
-    }
-
-    var holdRingStartSize: CGFloat {
-        holdRingMatchesStroke ? max(effectiveStrokeWidth * 0.4, 4) : effectSize * 0.2
-    }
-
-    var holdRingEndSize: CGFloat {
-        holdRingMatchesStroke ? max(effectiveStrokeWidth, 6) : effectSize * 0.65
-    }
+    var holdRingStartSize: CGFloat { effectSize * 0.2 }
+    var holdRingEndSize: CGFloat { effectSize * 0.65 }
 
     /// Animated ring size with ease-out curve
     var currentHoldRingSize: CGFloat {
@@ -248,7 +239,7 @@ class CursorHighlightManager: @unchecked Sendable {
 
     var isActive: Bool { clickEffectsEnabled && hasAnyActiveOverlay() }
 
-    var shouldShowRing: Bool { isActive && isMouseDown }
+    var shouldShowRing: Bool { isActive && isMouseDown && toolCursorKind == .system }
 
     /// Effects are structurally overlay-gated: nothing renders unless an overlay is visible (ADR-0001).
     var cursorHighlightAvailable: Bool {
@@ -300,7 +291,7 @@ class CursorHighlightManager: @unchecked Sendable {
     // MARK: - Release Animation
 
     func startReleaseAnimation() {
-        guard isActive else { return }
+        guard isActive && toolCursorKind == .system else { return }
 
         releaseAnimation = ReleaseAnimation(
             center: cursorPosition,
