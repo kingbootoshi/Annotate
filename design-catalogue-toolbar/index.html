@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Annotate · Toolbar Glass Catalogue</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    min-height:100vh; font-family:-apple-system,system-ui,sans-serif;
+    background:radial-gradient(1200px 700px at 50% -10%, #232b3d 0%, #10141c 60%);
+    color:#e8edf5; padding:48px 40px;
+  }
+  h1 { font-size:26px; font-weight:700; letter-spacing:-.5px; }
+  p.sub { color:#8b98ad; margin:8px 0 34px; font-size:14px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(420px, 1fr)); gap:22px; max-width:1400px; }
+  a.card {
+    display:block; text-decoration:none; color:inherit;
+    border-radius:16px; overflow:hidden;
+    background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.11);
+    transition:transform .2s, border-color .2s, box-shadow .2s;
+  }
+  a.card:hover { transform:translateY(-4px); border-color:rgba(255,255,255,.3); box-shadow:0 20px 44px rgba(0,0,0,.45); }
+  .thumb { height:230px; border-bottom:1px solid rgba(255,255,255,.08); position:relative; overflow:hidden; }
+  .thumb iframe {
+    width:200%; height:200%; transform:scale(.5); transform-origin:top left;
+    border:0; pointer-events:none;
+  }
+  .meta { padding:16px 18px 18px; }
+  .meta .n { font:600 11px ui-monospace,monospace; color:#7ea1ff; letter-spacing:1px; }
+  .meta h2 { font-size:17px; margin:4px 0 6px; }
+  .meta p { color:#96a2b5; font-size:13px; line-height:1.55; }
+</style>
+</head>
+<body>
+  <h1>Toolbar Glass Catalogue</h1>
+  <p class="sub">Five live directions for the Annotate shortcut bar — hover, click tools, feel the springs. Pick one (or a mix) and it gets ported into the app.</p>
+  <div class="grid">
+    <a class="card" href="01-liquid-glass.html">
+      <div class="thumb"><iframe src="01-liquid-glass.html" scrolling="no"></iframe></div>
+      <div class="meta"><span class="n">01</span><h2>Liquid Glass Capsule</h2>
+      <p>One continuous frosted capsule, macOS-26 style: specular top edge, heavy blur+saturation, a glass lens that glides to the active tool. The most "native Apple" of the five.</p></div>
+    </a>
+    <a class="card" href="02-dock-magnify.html">
+      <div class="thumb"><iframe src="02-dock-magnify.html" scrolling="no"></iframe></div>
+      <div class="meta"><span class="n">02</span><h2>Playful Dock</h2>
+      <p>Mini app-icon tiles in candy gradients on a glass shelf — real dock magnification as your mouse sweeps, tooltips above, running-dot under the active tool. The most playful.</p></div>
+    </a>
+    <a class="card" href="03-segmented-lens.html">
+      <div class="thumb"><iframe src="03-segmented-lens.html" scrolling="no"></iframe></div>
+      <div class="meta"><span class="n">03</span><h2>Segmented Lens</h2>
+      <p>Three separate glass segments — draw / ink / time — with an iOS-springy sliding lens. Cleanest information grouping, most compact height.</p></div>
+    </a>
+    <a class="card" href="04-floating-islands.html">
+      <div class="thumb"><iframe src="04-floating-islands.html" scrolling="no"></iframe></div>
+      <div class="meta"><span class="n">04</span><h2>Floating Islands</h2>
+      <p>Tinted glass islets (neutral draw, warm ink, cool history) with tiny uppercase labels floating above. Buttons wiggle-tilt on hover; islands lift as a group.</p></div>
+    </a>
+    <a class="card" href="05-candy-bubble.html">
+      <div class="thumb"><iframe src="05-candy-bubble.html" scrolling="no"></iframe></div>
+      <div class="meta"><span class="n">05</span><h2>Candy Bubble</h2>
+      <p>Round glass bubbles in one clear bar — the active tool inflates in its own candy color with a soft glow, keycaps pop in on hover. Maximum personality per pixel.</p></div>
+    </a>
+  </div>
+</body>
+</html>

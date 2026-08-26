@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>03 · Segmented Lens</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-user-select:none; }
+  html,body { height:100%; overflow:hidden; font-family:-apple-system,system-ui,sans-serif; }
+  body {
+    background:
+      linear-gradient(180deg, #10141c 0%, #1a2230 100%);
+  }
+  .glow { position:absolute; width:60vw; height:40vh; filter:blur(120px); opacity:.35; border-radius:50%; }
+  .g1 { background:#2f6bff; top:-10%; left:-10%; }
+  .g2 { background:#a03cff; bottom:-15%; right:-5%; }
+  .win { position:absolute; border-radius:12px; background:rgba(26,32,44,.8); box-shadow:0 20px 60px rgba(0,0,0,.5); border:1px solid #2b3340; }
+  .w1 { left:8%; top:10%; width:42%; height:58%; }
+  .tb { height:34px; border-bottom:1px solid #2b3340; display:flex; align-items:center; padding:0 12px; gap:7px; }
+  .dot { width:11px; height:11px; border-radius:50%; }
+  svg.scribble { position:absolute; inset:0; pointer-events:none; }
+
+  .rail { position:absolute; bottom:24px; left:50%; transform:translateX(-50%); display:flex; gap:10px; align-items:center; }
+  .seg {
+    display:flex; align-items:center; padding:5px;
+    border-radius:18px; position:relative;
+    background:rgba(255,255,255,.06);
+    -webkit-backdrop-filter:blur(34px) saturate(200%);
+    backdrop-filter:blur(34px) saturate(200%);
+    border:1px solid rgba(255,255,255,.13);
+    box-shadow:0 14px 38px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  .btn {
+    position:relative; z-index:1;
+    display:flex; align-items:center; gap:6px;
+    padding:8px 12px; border-radius:13px; cursor:pointer;
+    color:rgba(255,255,255,.75); font-size:12px; font-weight:500;
+    transition:color .15s, transform .15s cubic-bezier(.3,1.6,.4,1);
+  }
+  .btn:hover { color:#fff; transform:scale(1.06); }
+  .btn:active { transform:scale(.95); }
+  .btn svg { width:16px; height:16px; }
+  .btn .k { font:600 9px ui-monospace,monospace; opacity:.45; background:rgba(255,255,255,.1); padding:2px 4px; border-radius:4px; }
+  .btn.on { color:#fff; }
+  .btn.on .k { opacity:.9; }
+  .lens {
+    position:absolute; top:5px; height:calc(100% - 10px); border-radius:13px; z-index:0;
+    background:linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,.1));
+    border:1px solid rgba(255,255,255,.3);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4), 0 6px 16px rgba(0,0,0,.3);
+    transition:left .34s cubic-bezier(.3,1.45,.35,1), width .34s cubic-bezier(.3,1.45,.35,1);
+  }
+  .icon-only .btn { padding:8px 10px; }
+  .badge { position:fixed; top:18px; left:22px; color:#8b98ad; font:12px ui-monospace,monospace; }
+</style>
+</head>
+<body>
+  <div class="glow g1"></div><div class="glow g2"></div>
+  <div class="badge">03 · SEGMENTED LENS — three glass segments (draw · adjust · history), springy sliding lens, labels only where they earn space</div>
+  <div class="win w1"><div class="tb"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div></div>
+  <svg class="scribble" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <path d="M62,26 C74,18 84,28 76,36 L60,50" fill="none" stroke="#ff5a4e" stroke-width="1.1" stroke-linecap="round" opacity=".9"/>
+  </svg>
+
+  <div class="rail">
+    <div class="seg" id="segTools"><div class="lens" id="lensTools"></div></div>
+    <div class="seg icon-only" id="segAdjust"></div>
+    <div class="seg icon-only" id="segHist"></div>
+  </div>
+
+<script>
+const ICONS = {
+  pen:'M3 17l7.5-7.5 4 4L7 21H3v-4zM13.5 6.5l3-3a1.4 1.4 0 012 0l2 2a1.4 1.4 0 010 2l-3 3z',
+  high:'M4 15l8-8 5 5-8 8H4v-5zM14 5l2-2 5 5-2 2zM3 22h18v-1.5H3z',
+  arrow:'M4 20L18 6M18 6h-7M18 6v7',
+  line:'M4 19L20 5',
+  rect:'M4 7h16v11H4z',
+  circle:'M12 5.5a6.8 6.8 0 110 13.6 6.8 6.8 0 010-13.6z',
+  count:'M9 4v16M15 4v16M4 9h16M4 15h16',
+  text:'M5 6h14M12 6v13',
+  select:'M6 3l12 9-5.2 1L15 19l-2.4 1-2.2-6L6 16z',
+  erase:'M8 19l-4-4 9.5-9.5a1.5 1.5 0 012.1 0l3.9 3.9a1.5 1.5 0 010 2.1L12 19H8zM4 21h16',
+  color:'M12 3c4.5 4.8 7 8 7 11a7 7 0 11-14 0c0-3 2.5-6.2 7-11z',
+  width:'M4 6h16v1H4zM4 11h16v2.4H4zM4 17h16v4H4z',
+  fade:'M12 4a8 8 0 100 16 8 8 0 000-16zm0 2.5v11',
+  back:'M9 5l-6 7 6 7M3 12h18',
+  clear:'M5 7h14l-1.2 13H6.2zM9 7V4h6v3M3.5 7h17',
+  undo:'M7 5L3 9l4 4M3 9h11a6 6 0 010 12h-3',
+};
+function svg(n){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="${ICONS[n]}"/></svg>`;}
+const tools=[['pen','P'],['high','H'],['arrow','A'],['line','L'],['rect','R'],['circle','O'],['count','N'],['text','T'],['select','V'],['erase','E']];
+const segTools=document.getElementById('segTools');
+const lens=document.getElementById('lensTools');
+let btns=[];
+tools.forEach(([n,k])=>{
+  const b=document.createElement('div'); b.className='btn';
+  b.innerHTML=svg(n)+`<span class="k">${k}</span>`;
+  segTools.appendChild(b); btns.push(b);
+  b.onclick=()=>{btns.forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    lens.style.left=b.offsetLeft+'px'; lens.style.width=b.offsetWidth+'px';};
+});
+function fill(seg, list){
+  list.forEach(([n,label])=>{
+    const b=document.createElement('div'); b.className='btn';
+    b.innerHTML=svg(n)+(label?`<span class="k">${label}</span>`:'');
+    document.getElementById(seg).appendChild(b);
+    b.onclick=()=>{b.style.transform='scale(1.2)'; setTimeout(()=>b.style.transform='',180);};
+  });
+}
+fill('segAdjust',[['color','C'],['width','W'],['fade','␣']]);
+fill('segHist',[['back','⌫'],['clear','⌥⌫'],['undo','⌘Z']]);
+setTimeout(()=>btns[1].click(),50);
+</script>
+</body>
+</html>

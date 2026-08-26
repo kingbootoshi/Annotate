@@ -25,6 +25,7 @@ class OverlayWindow: NSPanel {
     private var pickerMoveMonitor: Any?
     private var lastLiveShapeRect: NSRect?
     private var helpBarHost: NSHostingView<HelpBarView>?
+    private var isHelpBarGestureActive = false
     private var feedbackRemovalTask: DispatchWorkItem?
     
     // Create undo manager for this window
@@ -138,6 +139,13 @@ class OverlayWindow: NSPanel {
             y: 20,
             width: size.width,
             height: size.height)
+    }
+
+    func isPointInHelpBar(_ windowPoint: NSPoint) -> Bool {
+        guard let host = helpBarHost, !host.isHidden, let container = contentView else {
+            return false
+        }
+        return host.frame.contains(container.convert(windowPoint, from: nil))
     }
 
     private func handleHelpBarAction(_ action: HelpBarAction) {
@@ -300,6 +308,11 @@ class OverlayWindow: NSPanel {
     override func mouseDown(with event: NSEvent) {
         if quickPicker != nil {
             commitQuickPicker()
+            return
+        }
+
+        isHelpBarGestureActive = isPointInHelpBar(event.locationInWindow)
+        if isHelpBarGestureActive {
             return
         }
         // Update cursor highlight for local events (global monitors don't capture our own app's events)
@@ -527,6 +540,7 @@ class OverlayWindow: NSPanel {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if isHelpBarGestureActive { return }
         // Update cursor highlight position during drag (animation loop handles rendering)
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive && cursorManager.isMouseDown {
@@ -695,6 +709,10 @@ class OverlayWindow: NSPanel {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if isHelpBarGestureActive {
+            isHelpBarGestureActive = false
+            return
+        }
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive {
             cursorManager.startReleaseAnimation()

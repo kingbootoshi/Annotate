@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>04 · Floating Islands</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-user-select:none; }
+  html,body { height:100%; overflow:hidden; font-family:-apple-system,system-ui,sans-serif; }
+  body { background:radial-gradient(1400px 800px at 50% -10%, #263247 0%, #141922 60%); }
+  .win { position:absolute; border-radius:12px; background:#1d2330; box-shadow:0 20px 60px rgba(0,0,0,.5); border:1px solid #2b3340; }
+  .w1 { left:9%; top:9%; width:40%; height:56%; }
+  .tb { height:34px; border-bottom:1px solid #2b3340; display:flex; align-items:center; padding:0 12px; gap:7px; }
+  .dot { width:11px; height:11px; border-radius:50%; }
+  svg.scribble { position:absolute; inset:0; pointer-events:none; }
+
+  .rail { position:absolute; bottom:26px; left:50%; transform:translateX(-50%); display:flex; align-items:flex-end; gap:14px; }
+  .island {
+    display:flex; align-items:center; gap:3px; padding:8px 11px;
+    border-radius:20px;
+    -webkit-backdrop-filter:blur(32px) saturate(190%);
+    backdrop-filter:blur(32px) saturate(190%);
+    border:1px solid rgba(255,255,255,.15);
+    box-shadow:0 16px 42px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.3);
+    transition:transform .25s cubic-bezier(.3,1.5,.4,1);
+  }
+  .island:hover { transform:translateY(-5px); }
+  .i-tools { background:rgba(255,255,255,.07); }
+  .i-adjust { background:rgba(255,170,80,.09); border-color:rgba(255,190,120,.22); }
+  .i-hist { background:rgba(90,160,255,.09); border-color:rgba(130,180,255,.22); }
+  .island .title {
+    position:absolute; top:-19px; left:14px; font:600 9px/1 ui-monospace,monospace;
+    letter-spacing:1.5px; color:rgba(255,255,255,.3); text-transform:uppercase;
+  }
+  .island { position:relative; }
+  .b {
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+    padding:6px 9px; border-radius:12px; cursor:pointer; color:rgba(255,255,255,.8);
+    transition:transform .15s cubic-bezier(.3,1.7,.4,1), background .15s, color .15s;
+  }
+  .b:hover { transform:translateY(-4px) rotate(-3deg) scale(1.12); color:#fff; }
+  .b:active { transform:scale(.9); }
+  .b svg { width:17px; height:17px; }
+  .b .k { font:600 8px ui-monospace,monospace; opacity:.5; }
+  .b.on { background:rgba(255,255,255,.18); color:#fff; box-shadow:inset 0 1px 0 rgba(255,255,255,.35), 0 4px 12px rgba(0,0,0,.3); }
+  .b.on .k { opacity:.9; }
+  .i-adjust .b:hover { color:#ffd9a0; }
+  .i-hist .b:hover { color:#a8ccff; }
+  .badge { position:fixed; top:18px; left:22px; color:#8b98ad; font:12px ui-monospace,monospace; }
+</style>
+</head>
+<body>
+  <div class="badge">04 · FLOATING ISLANDS — three tinted glass islets (neutral / warm / cool), labeled, buttons wiggle on hover</div>
+  <div class="win w1"><div class="tb"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div></div>
+  <svg class="scribble" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <path d="M60,24 C72,16 84,24 78,34 C72,44 58,42 64,54" fill="none" stroke="#ff5a4e" stroke-width="1.1" stroke-linecap="round" opacity=".9"/>
+  </svg>
+
+  <div class="rail">
+    <div class="island i-tools" id="iTools"><span class="title">Draw</span></div>
+    <div class="island i-adjust" id="iAdjust"><span class="title">Ink</span></div>
+    <div class="island i-hist" id="iHist"><span class="title">Time</span></div>
+  </div>
+
+<script>
+const ICONS = {
+  pen:'M3 17l7.5-7.5 4 4L7 21H3v-4zM13.5 6.5l3-3a1.4 1.4 0 012 0l2 2a1.4 1.4 0 010 2l-3 3z',
+  high:'M4 15l8-8 5 5-8 8H4v-5zM14 5l2-2 5 5-2 2zM3 22h18v-1.5H3z',
+  arrow:'M4 20L18 6M18 6h-7M18 6v7',
+  line:'M4 19L20 5',
+  rect:'M4 7h16v11H4z',
+  circle:'M12 5.5a6.8 6.8 0 110 13.6 6.8 6.8 0 010-13.6z',
+  count:'M9 4v16M15 4v16M4 9h16M4 15h16',
+  text:'M5 6h14M12 6v13',
+  select:'M6 3l12 9-5.2 1L15 19l-2.4 1-2.2-6L6 16z',
+  erase:'M8 19l-4-4 9.5-9.5a1.5 1.5 0 012.1 0l3.9 3.9a1.5 1.5 0 010 2.1L12 19H8zM4 21h16',
+  color:'M12 3c4.5 4.8 7 8 7 11a7 7 0 11-14 0c0-3 2.5-6.2 7-11z',
+  width:'M4 6h16v1H4zM4 11h16v2.4H4zM4 17h16v4H4z',
+  fade:'M12 4a8 8 0 100 16 8 8 0 000-16zm0 2.5v11',
+  back:'M9 5l-6 7 6 7M3 12h18',
+  clear:'M5 7h14l-1.2 13H6.2zM9 7V4h6v3M3.5 7h17',
+  undo:'M7 5L3 9l4 4M3 9h11a6 6 0 010 12h-3',
+};
+function svg(n){return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="${ICONS[n]}"/></svg>`;}
+const tools=[['pen','P'],['high','H'],['arrow','A'],['line','L'],['rect','R'],['circle','O'],['count','N'],['text','T'],['select','V'],['erase','E']];
+let btns=[];
+tools.forEach(([n,k])=>{
+  const b=document.createElement('div'); b.className='b';
+  b.innerHTML=svg(n)+`<span class="k">${k}</span>`;
+  document.getElementById('iTools').appendChild(b); btns.push(b);
+  b.onclick=()=>{btns.forEach(x=>x.classList.remove('on')); b.classList.add('on');};
+});
+btns[1].classList.add('on');
+function fill(id, list){
+  list.forEach(([n,k])=>{
+    const b=document.createElement('div'); b.className='b';
+    b.innerHTML=svg(n)+`<span class="k">${k}</span>`;
+    document.getElementById(id).appendChild(b);
+    b.onclick=()=>{b.style.transform='translateY(-8px) scale(1.25) rotate(4deg)'; setTimeout(()=>b.style.transform='',200);};
+  });
+}
+fill('iAdjust',[['color','C'],['width','W'],['fade','␣']]);
+fill('iHist',[['back','⌫'],['clear','⌥⌫'],['undo','⌘Z']]);
+</script>
+</body>
+</html>

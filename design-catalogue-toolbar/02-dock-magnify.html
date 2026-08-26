@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>02 · Playful Dock</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-user-select:none; }
+  html,body { height:100%; overflow:hidden; font-family:-apple-system,system-ui,sans-serif; }
+  body {
+    background:
+      radial-gradient(1000px 500px at 30% 15%, #223448 0%, transparent 60%),
+      radial-gradient(800px 600px at 85% 75%, #35244a 0%, transparent 55%),
+      #151a23;
+  }
+  .win { position:absolute; border-radius:12px; background:#1d2330; box-shadow:0 20px 60px rgba(0,0,0,.5); border:1px solid #2b3340; }
+  .w1 { left:7%; top:9%; width:44%; height:60%; }
+  .tb { height:34px; border-bottom:1px solid #2b3340; display:flex; align-items:center; padding:0 12px; gap:7px; }
+  .dot { width:11px; height:11px; border-radius:50%; }
+  .code { padding:16px; color:#5d6b82; font:13px/1.7 ui-monospace,monospace; }
+  svg.scribble { position:absolute; inset:0; pointer-events:none; }
+
+  .dock-wrap { position:absolute; bottom:22px; left:50%; transform:translateX(-50%); }
+  .dock {
+    display:flex; align-items:flex-end; gap:7px; padding:9px 13px;
+    border-radius:24px;
+    background:rgba(255,255,255,.08);
+    -webkit-backdrop-filter:blur(30px) saturate(180%);
+    backdrop-filter:blur(30px) saturate(180%);
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 20px 50px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.3);
+  }
+  .tile {
+    position:relative; width:44px; height:44px; border-radius:12px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    color:#fff;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.4), inset 0 -2px 4px rgba(0,0,0,.18), 0 4px 10px rgba(0,0,0,.3);
+    transition:transform .16s cubic-bezier(.3,1.6,.4,1);
+    transform-origin:bottom center;
+  }
+  .tile svg { width:21px; height:21px; filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)); }
+  .tile .kbd {
+    position:absolute; right:-3px; bottom:-3px;
+    font:600 8px/1 ui-monospace,monospace; color:rgba(255,255,255,.95);
+    background:rgba(0,0,0,.55); border:1px solid rgba(255,255,255,.25);
+    padding:2.5px 4px; border-radius:5px; letter-spacing:.3px;
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  }
+  .tile .tip {
+    position:absolute; bottom:58px; left:50%; transform:translateX(-50%) scale(.8);
+    opacity:0; pointer-events:none; white-space:nowrap;
+    background:rgba(20,24,32,.85); color:#fff; font-size:11px; font-weight:500;
+    padding:4px 9px; border-radius:8px; border:1px solid rgba(255,255,255,.15);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    transition:.15s;
+  }
+  .tile:hover .tip { opacity:1; transform:translateX(-50%) scale(1); }
+  .tile.on::after {
+    content:''; position:absolute; bottom:-7px; left:50%; transform:translateX(-50%);
+    width:4px; height:4px; border-radius:50%; background:#fff; box-shadow:0 0 6px #fff;
+  }
+  .sep { width:1px; align-self:stretch; margin:4px 3px; background:linear-gradient(rgba(255,255,255,0),rgba(255,255,255,.22),rgba(255,255,255,0)); }
+  .badge { position:fixed; top:18px; left:22px; color:#8b98ad; font:12px ui-monospace,monospace; }
+</style>
+</head>
+<body>
+  <div class="badge">02 · PLAYFUL DOCK — app-icon tiles, magnification, tooltip labels, running-dot for active tool</div>
+  <div class="win w1"><div class="tb"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span></div>
+    <div class="code">$ hover the dock<br>tiles magnify like the real one</div></div>
+  <svg class="scribble" viewBox="0 0 100 100" preserveAspectRatio="none">
+    <path d="M60,30 C70,20 82,26 76,36 C70,46 58,44 62,54" fill="none" stroke="#ff5a4e" stroke-width="1.1" stroke-linecap="round" opacity=".9"/>
+  </svg>
+
+  <div class="dock-wrap"><div class="dock" id="dock"></div></div>
+
+<script>
+const ICONS = {
+  pen:'M3 17l7.5-7.5 4 4L7 21H3v-4zM13.5 6.5l3-3a1.4 1.4 0 012 0l2 2a1.4 1.4 0 010 2l-3 3z',
+  high:'M4 15l8-8 5 5-8 8H4v-5zM14 5l2-2 5 5-2 2zM3 22h18v-1.5H3z',
+  arrow:'M4 20L18 6M18 6h-7M18 6v7',
+  line:'M4 19L20 5',
+  rect:'M4 7h16v11H4z',
+  circle:'M12 5.5a6.8 6.8 0 110 13.6 6.8 6.8 0 010-13.6z',
+  count:'M9 4v16M15 4v16M4 9h16M4 15h16',
+  text:'M5 6h14M12 6v13',
+  select:'M6 3l12 9-5.2 1L15 19l-2.4 1-2.2-6L6 16z',
+  erase:'M8 19l-4-4 9.5-9.5a1.5 1.5 0 012.1 0l3.9 3.9a1.5 1.5 0 010 2.1L12 19H8zM4 21h16',
+  color:'M12 3c4.5 4.8 7 8 7 11a7 7 0 11-14 0c0-3 2.5-6.2 7-11z',
+  width:'M4 6h16v1H4zM4 11h16v2.4H4zM4 17h16v4H4z',
+  fade:'M12 4a8 8 0 100 16 8 8 0 000-16zm0 2.5v11',
+  back:'M9 5l-6 7 6 7M3 12h18',
+  clear:'M5 7h14l-1.2 13H6.2zM9 7V4h6v3M3.5 7h17',
+  undo:'M7 5L3 9l4 4M3 9h11a6 6 0 010 12h-3',
+};
+const GRADS = {
+  pen:['#ff9f43','#ee5253'], high:['#feca57','#ff9f43'], arrow:['#54a0ff','#2e86de'],
+  line:['#48dbfb','#0abde3'], rect:['#5f27cd','#8854d0'], circle:['#00d2d3','#01a3a4'],
+  count:['#ff6b6b','#ee5253'], text:['#c8d6e5','#8395a7'], select:['#576574','#222f3e'],
+  erase:['#ff9ff3','#f368e0'], color:['#ee5253','#ff6b6b'], width:['#8395a7','#576574'],
+  fade:['#a29bfe','#6c5ce7'], back:['#576574','#3d4a5c'], clear:['#576574','#3d4a5c'], undo:['#576574','#3d4a5c'],
+};
+const items = [
+  ['pen','P','Pen'],['high','H','Highlighter'],['arrow','A','Arrow'],['line','L','Line'],['rect','R','Rectangle'],
+  ['circle','O','Circle'],['count','N','Counter'],['text','T','Text'],['select','V','Select'],['erase','E','Eraser'],
+  'sep',
+  ['color','C','Color'],['width','W','Width'],['fade','␣','Fade'],
+  'sep',
+  ['back','⌫','Delete Last'],['clear','⌥⌫','Clear All'],['undo','⌘Z','Undo'],
+];
+const dock=document.getElementById('dock');
+const tools=['pen','high','arrow','line','rect','circle','count','text','select','erase'];
+let tiles=[];
+items.forEach(it=>{
+  if(it==='sep'){const s=document.createElement('div');s.className='sep';dock.appendChild(s);return;}
+  const [name,k,label]=it;
+  const t=document.createElement('div');
+  t.className='tile'; t.dataset.name=name;
+  const [g1,g2]=GRADS[name];
+  t.style.background=`linear-gradient(160deg, ${g1}, ${g2})`;
+  t.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linejoin="round" stroke-linecap="round"><path d="${ICONS[name]}"/></svg>
+    <span class="kbd">${k}</span><span class="tip">${label}</span>`;
+  dock.appendChild(t); tiles.push(t);
+  t.onclick=()=>{
+    if(tools.includes(name)){ tiles.forEach(x=>x.classList.remove('on')); t.classList.add('on'); }
+    t.style.transform='translateY(-16px) scale(1.28)';
+    setTimeout(()=>t.style.transform='',220);
+  };
+});
+tiles[1].classList.add('on');
+// magnification
+dock.addEventListener('mousemove',e=>{
+  tiles.forEach(t=>{
+    const r=t.getBoundingClientRect();
+    const d=Math.abs(e.clientX-(r.left+r.width/2));
+    const s=Math.max(0, 1-d/130);
+    t.style.transform=`translateY(${-14*s}px) scale(${1+0.32*s})`;
+  });
+});
+dock.addEventListener('mouseleave',()=>tiles.forEach(t=>t.style.transform=''));
+</script>
+</body>
+</html>
