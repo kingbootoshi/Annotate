@@ -15,6 +15,8 @@ Ink-contact previews are **exact-size**: the brush cursor's ink dot and the "Cir
 
 `activeCursorSize` is the eraser ring's hit-radius only. It never gates or scales a drawing-tool cursor.
 
+**Minimum-visibility exception:** width-matched indicators (hold ring) floor at 6px outer diameter so they stay legible at hairline widths; below that, the indicator is a visibility affordance, not an exact preview. The ink contact dot floors at 2px. These are the only sanctioned deviations from exact-size.
+
 Settings-window style thumbnails are demo-scale shape illustrations, not width previews; they are exempt from exact-size but must not read width from anywhere.
 
 ## Why
