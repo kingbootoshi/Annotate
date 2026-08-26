@@ -25,6 +25,7 @@ class OverlayWindow: NSPanel {
     private var pickerMoveMonitor: Any?
     private var lastLiveShapeRect: NSRect?
     private var helpBarHost: NSHostingView<HelpBarView>?
+    private let helpBarModel = HelpBarModel()
     private var isHelpBarGestureActive = false
     private var feedbackRemovalTask: DispatchWorkItem?
     
@@ -93,7 +94,12 @@ class OverlayWindow: NSPanel {
     }
 
     private func installHelpBar(in container: NSView) {
-        let host = NSHostingView(rootView: makeHelpBarRoot())
+        helpBarModel.activeTool = overlayView.currentTool
+        helpBarModel.fadeMode = overlayView.fadeMode
+        let root = HelpBarView(model: helpBarModel) { [weak self] action in
+            self?.handleHelpBarAction(action)
+        }
+        let host = NSHostingView(rootView: root)
         host.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
         container.addSubview(host)
         helpBarHost = host
@@ -108,21 +114,15 @@ class OverlayWindow: NSPanel {
     }
 
     @objc private func shortcutsChangedForHelpBar() {
-        refreshHelpBar()
-    }
-
-    private func makeHelpBarRoot() -> HelpBarView {
-        HelpBarView(
-            activeTool: overlayView.currentTool,
-            fadeMode: overlayView.fadeMode
-        ) { [weak self] action in
-            self?.handleHelpBarAction(action)
-        }
+        helpBarModel.shortcutsVersion += 1
+        layoutHelpBar()
     }
 
     func refreshHelpBar() {
-        helpBarHost?.rootView = makeHelpBarRoot()
-        layoutHelpBar()
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
+            helpBarModel.activeTool = overlayView.currentTool
+            helpBarModel.fadeMode = overlayView.fadeMode
+        }
     }
 
     func updateHelpBarVisibility() {
@@ -175,8 +175,6 @@ class OverlayWindow: NSPanel {
             overlayView.clearAll()
         case .undo:
             overlayView.undo()
-        case .hide:
-            AppDelegate.shared?.setHelpBarVisible(false)
         }
     }
 

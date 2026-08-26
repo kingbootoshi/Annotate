@@ -296,7 +296,7 @@ class CursorHighlightView: NSView {
 
                 cursorLayer.path = paths.inner
                 cursorLayer.position = localPoint
-                cursorLayer.fillColor = manager.annotationColorCG
+                cursorLayer.fillColor = manager.inkColorCG
                 cursorLayer.strokeColor = nil
                 cursorLayer.lineWidth = 0
                 cursorLayer.opacity = manager.effectiveStrokeWidth >= 12 ? 1 : 0
@@ -338,7 +338,7 @@ class CursorHighlightView: NSView {
 
                 cursorLayer.path = inkContactDotPath(diameter: max(manager.effectiveStrokeWidth, 2))
                 cursorLayer.position = localPoint
-                cursorLayer.fillColor = manager.annotationColorCG
+                cursorLayer.fillColor = manager.inkColorCG
                 cursorLayer.strokeColor = nil
                 cursorLayer.lineWidth = 0
                 cursorLayer.opacity = 1

@@ -872,10 +872,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         if validPoints.count > 1 {
-            let strokeColor =
-                isHighlighter
-                ? path.color.withAlphaComponent(0.5)
-                : path.color.withAlphaComponent(1)
+            let strokeColor = path.color.withAlphaComponent(
+                (isHighlighter ? ToolType.highlighter : ToolType.pen).laydownAlpha)
 
             strokeColor.setStroke()
             line.lineWidth = path.lineWidth * (isHighlighter ? ToolType.highlighter : ToolType.pen).strokeWidthMultiplier
@@ -1000,11 +998,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
             bezierPath.line(to: timedPoint.point)
         }
 
-        if tool == .highlighter {
-            adaptedColor.withAlphaComponent(0.5).setStroke()
-        } else {
-            adaptedColor.setStroke()
-        }
+        adaptedColor.withAlphaComponent(tool.laydownAlpha).setStroke()
         bezierPath.lineWidth = path.lineWidth * tool.strokeWidthMultiplier
 
         bezierPath.lineJoinStyle = .round

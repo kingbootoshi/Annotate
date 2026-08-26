@@ -34,6 +34,12 @@ enum ToolType: String, CaseIterable {
     var strokeWidthMultiplier: CGFloat {
         self == .highlighter ? 4.67 : 1
     }
+
+    /// Ink opacity the tool actually lays down (ADR-0002): every color preview
+    /// (renderer, cursor ink dot, pickers) derives from this — never a second inline constant.
+    var laydownAlpha: CGFloat {
+        self == .highlighter ? 0.5 : 1
+    }
 }
 
 /// Which tool becomes active each time the overlay is activated. `.lastUsed` keeps the

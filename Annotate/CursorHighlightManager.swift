@@ -59,6 +59,13 @@ class CursorHighlightManager: @unchecked Sendable {
     private(set) var effectColorFillCG: CGColor = NSColor.systemYellow.withAlphaComponent(0.12).cgColor
     private(set) var effectColorSpotlightCG: CGColor = NSColor.systemYellow.withAlphaComponent(0.3).cgColor
     private(set) var annotationColorCG: CGColor = NSColor.systemRed.cgColor
+    private(set) var highlighterInkColorCG: CGColor =
+        NSColor.systemRed.withAlphaComponent(ToolType.highlighter.laydownAlpha).cgColor
+
+    /// Ink preview color at the alpha the active tool actually lays down (ADR-0002).
+    var inkColorCG: CGColor {
+        activeTool == .highlighter ? highlighterInkColorCG : annotationColorCG
+    }
 
     private func updateEffectColorCache(_ color: NSColor) {
         effectColorCG = color.cgColor
@@ -69,6 +76,8 @@ class CursorHighlightManager: @unchecked Sendable {
 
     private func updateAnnotationColorCache(_ color: NSColor) {
         annotationColorCG = color.cgColor
+        highlighterInkColorCG =
+            color.withAlphaComponent(ToolType.highlighter.laydownAlpha).cgColor
     }
 
     init(userDefaults: UserDefaults = .standard) {
