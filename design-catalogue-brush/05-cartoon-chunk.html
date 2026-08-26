@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>05 · Cartoon Chunk</title>
+<link rel="stylesheet" href="_shared.css">
+</head>
+<body>
+<canvas id="paper"></canvas>
+<div class="nav"><a href="index.html">← catalogue</a></div>
+
+<svg id="cursor" width="0" height="0">
+  <g id="glyph">
+    <path d="M0 0 C -7 -7 -11 -14 -9.5 -26 L 9.5 -26 C 11 -14 7 -7 0 0 Z"
+          fill="#c98336" stroke="#141416" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M -4.5 -8 C -6 -13 -6.5 -18 -6 -25 M 4.5 -8 C 6 -13 6.5 -18 6 -25"
+          stroke="#8f5a1e" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+    <rect x="-10.5" y="-38" width="21" height="12" rx="3" fill="#ffd23f" stroke="#141416" stroke-width="2.4"/>
+    <path d="M -7.5 -38 L -7.5 -68 Q -7.5 -76 0 -76 Q 7.5 -76 7.5 -68 L 7.5 -38 Z"
+          fill="#2e5ea8" stroke="#141416" stroke-width="2.4" stroke-linejoin="round"/>
+    <path d="M -3.5 -44 L -3.5 -66"
+          stroke="#7ea4dd" stroke-width="2.2" fill="none" stroke-linecap="round" opacity=".9"/>
+  </g>
+  <circle id="dot" cx="0" cy="0" r="6"/>
+</svg>
+
+<div class="hud">
+  <span class="name">05 · Cartoon Chunk</span>
+  <input id="size" type="range" min="2" max="24" value="6" step="1">
+  <span id="sizeLabel">6 px</span>
+  <div class="swatch on" data-c="#ff4d42" style="background:#ff4d42"></div>
+  <div class="swatch" data-c="#ffd23f" style="background:#ffd23f"></div>
+  <div class="swatch" data-c="#3fd2ff" style="background:#3fd2ff"></div>
+  <div class="swatch" data-c="#ffffff" style="background:#fff"></div>
+  <button id="clear">Clear</button>
+</div>
+<script src="_shared.js"></script>
+</body>
+</html>

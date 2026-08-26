@@ -1,0 +1,19 @@
+html, body { margin: 0; height: 100%; overflow: hidden; background: #101014; cursor: none; }
+* { font-family: -apple-system, system-ui, sans-serif; }
+canvas { display: block; position: fixed; inset: 0; }
+#cursor { position: fixed; left: 0; top: 0; width: 4px; height: 4px; pointer-events: none; overflow: visible; z-index: 10; }
+.hud {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px;
+  background: rgba(18,18,24,.88); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 16px; padding: 12px 18px; z-index: 20; cursor: default;
+  color: #eee; font-size: 13px; backdrop-filter: blur(12px);
+}
+.hud .name { font-weight: 700; letter-spacing: .3px; margin-right: 4px; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; }
+.swatch.on { border-color: #fff; }
+input[type=range] { width: 140px; accent-color: #ff8a3d; }
+#clear { background: rgba(255,255,255,.1); color: #eee; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 5px 12px; font-size: 12px; }
+#clear:hover { background: rgba(255,255,255,.2); }
+.nav { position: fixed; top: 20px; left: 20px; z-index: 20; }
+.nav a { color: #9aa; text-decoration: none; font-size: 13px; background: rgba(18,18,24,.8); padding: 8px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12); }

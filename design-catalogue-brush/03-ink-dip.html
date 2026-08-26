@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>03 · Ink Dip</title>
+<link rel="stylesheet" href="_shared.css">
+</head>
+<body>
+<canvas id="paper"></canvas>
+<div class="nav"><a href="index.html">← catalogue</a></div>
+
+<svg id="cursor" width="0" height="0">
+  <defs>
+    <linearGradient id="ferrule3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8f6a1e"/>
+      <stop offset=".4" stop-color="#f3d160"/>
+      <stop offset="1" stop-color="#7c5a16"/>
+    </linearGradient>
+  </defs>
+  <g id="glyph">
+    <path d="M0 0 C -4.5 -5 -7.5 -12 -7 -22 L 7 -22 C 7.5 -12 4.5 -5 0 0 Z"
+          fill="#93622c" stroke="#4e3210" stroke-width="1.4"/>
+    <path id="dip" d="M0 0 C -3.4 -3.8 -5.4 -7.5 -6 -11 C -2 -9.4 2 -9.4 6 -11 C 5.4 -7.5 3.4 -3.8 0 0 Z"
+          fill="#ff4d42" stroke="none"/>
+    <rect x="-7.5" y="-32" width="15" height="10" rx="1.5" fill="url(#ferrule3)" stroke="#5e4410" stroke-width="1.2"/>
+    <line x1="-7.5" y1="-25.3" x2="7.5" y2="-25.3" stroke="#5e4410" stroke-width="1"/>
+    <path d="M -6 -32 C -6.5 -50 -3 -60 0 -70 C 3 -60 6.5 -50 6 -32 Z"
+          fill="#101014" stroke="#e8e8f0" stroke-width="1.4"/>
+  </g>
+  <circle id="dot" cx="0" cy="0" r="6"/>
+</svg>
+
+<div class="hud">
+  <span class="name">03 · Ink Dip <small style="opacity:.6">(tip drinks your color)</small></span>
+  <input id="size" type="range" min="2" max="24" value="6" step="1">
+  <span id="sizeLabel">6 px</span>
+  <div class="swatch on" data-c="#ff4d42" style="background:#ff4d42"></div>
+  <div class="swatch" data-c="#ffd23f" style="background:#ffd23f"></div>
+  <div class="swatch" data-c="#3fd2ff" style="background:#3fd2ff"></div>
+  <div class="swatch" data-c="#ffffff" style="background:#fff"></div>
+  <button id="clear">Clear</button>
+</div>
+<script>
+  window.onInk = function (color) {
+    document.getElementById('dip').setAttribute('fill', color);
+  };
+</script>
+<script src="_shared.js"></script>
+</body>
+</html>

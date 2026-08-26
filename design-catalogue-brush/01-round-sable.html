@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>01 · Round Sable</title>
+<link rel="stylesheet" href="_shared.css">
+</head>
+<body>
+<canvas id="paper"></canvas>
+<div class="nav"><a href="index.html">← catalogue</a></div>
+
+<svg id="cursor" width="0" height="0">
+  <defs>
+    <linearGradient id="ferrule1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#8f6a1e"/>
+      <stop offset=".35" stop-color="#f3d160"/>
+      <stop offset=".6" stop-color="#c79a2e"/>
+      <stop offset="1" stop-color="#7c5a16"/>
+    </linearGradient>
+    <linearGradient id="handle1" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#07070a"/>
+      <stop offset=".45" stop-color="#33333d"/>
+      <stop offset="1" stop-color="#0a0a0e"/>
+    </linearGradient>
+  </defs>
+  <g id="glyph">
+    <path d="M0 0 C -5 -6 -8.5 -13 -7.5 -24 L 7.5 -24 C 8.5 -13 5 -6 0 0 Z"
+          fill="#8a5a26" stroke="#4e3210" stroke-width="1.4"/>
+    <path d="M0 0 C -2 -3.5 -3.4 -8 -3.2 -13 L 3.2 -13 C 3.4 -8 2 -3.5 0 0 Z"
+          fill="#a9743a" opacity=".8"/>
+    <rect x="-8" y="-35" width="16" height="11" rx="1.6" fill="url(#ferrule1)" stroke="#5e4410" stroke-width="1.2"/>
+    <line x1="-8" y1="-27.5" x2="8" y2="-27.5" stroke="#5e4410" stroke-width="1"/>
+    <line x1="-8" y1="-31.5" x2="8" y2="-31.5" stroke="#5e4410" stroke-width="1"/>
+    <path d="M -6.5 -35 C -7 -52 -3.5 -62 0 -74 C 3.5 -62 7 -52 6.5 -35 Z"
+          fill="url(#handle1)" stroke="#e8e8f0" stroke-width="1.4"/>
+  </g>
+  <circle id="dot" cx="0" cy="0" r="6"/>
+</svg>
+
+<div class="hud">
+  <span class="name">01 · Round Sable</span>
+  <input id="size" type="range" min="2" max="24" value="6" step="1">
+  <span id="sizeLabel">6 px</span>
+  <div class="swatch on" data-c="#ff4d42" style="background:#ff4d42"></div>
+  <div class="swatch" data-c="#ffd23f" style="background:#ffd23f"></div>
+  <div class="swatch" data-c="#3fd2ff" style="background:#3fd2ff"></div>
+  <div class="swatch" data-c="#ffffff" style="background:#fff"></div>
+  <button id="clear">Clear</button>
+</div>
+<script src="_shared.js"></script>
+</body>
+</html>

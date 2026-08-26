@@ -10,6 +10,9 @@ class CursorHighlightView: NSView {
     private var activeCursorLayer: CAShapeLayer?
     private var activeCursorOutlineLayer: CAShapeLayer?
     private var activeCursorAccentLayer: CAShapeLayer?
+    private var activeCursorStrandLayer: CAShapeLayer?
+    private var activeCursorFerruleLayer: CAShapeLayer?
+    private var activeCursorGlossLayer: CAShapeLayer?
 
     // MARK: - Cached Paths (avoid per-frame allocations)
 
@@ -26,9 +29,11 @@ class CursorHighlightView: NSView {
     private var cachedScreenshotCrosshairPath: CGPath?
     private var cachedScreenshotCrosshairSize: CGFloat = 0
 
-    private var cachedBrushGoldPath: CGPath?
+    private var cachedBrushTuftPath: CGPath?
+    private var cachedBrushStrandPath: CGPath?
+    private var cachedBrushFerrulePath: CGPath?
     private var cachedBrushBarrelPath: CGPath?
-    private var cachedBrushInkPath: CGPath?
+    private var cachedBrushGlossPath: CGPath?
     private var cachedBrushSize: CGFloat = 0
 
     private var cachedOutlineOuterPath: CGPath?
@@ -81,13 +86,33 @@ class CursorHighlightView: NSView {
 
         let cursorOutline = CAShapeLayer()
         cursorOutline.opacity = 0
+        cursorOutline.lineJoin = .round
         layer?.addSublayer(cursorOutline)
         activeCursorOutlineLayer = cursorOutline
 
+        let cursorStrands = CAShapeLayer()
+        cursorStrands.opacity = 0
+        cursorStrands.lineCap = .round
+        layer?.addSublayer(cursorStrands)
+        activeCursorStrandLayer = cursorStrands
+
+        let cursorFerrule = CAShapeLayer()
+        cursorFerrule.opacity = 0
+        cursorFerrule.lineJoin = .round
+        layer?.addSublayer(cursorFerrule)
+        activeCursorFerruleLayer = cursorFerrule
+
         let cursorAccent = CAShapeLayer()
         cursorAccent.opacity = 0
+        cursorAccent.lineJoin = .round
         layer?.addSublayer(cursorAccent)
         activeCursorAccentLayer = cursorAccent
+
+        let cursorGloss = CAShapeLayer()
+        cursorGloss.opacity = 0
+        cursorGloss.lineCap = .round
+        layer?.addSublayer(cursorGloss)
+        activeCursorGlossLayer = cursorGloss
 
         let cursorLayer = CAShapeLayer()
         cursorLayer.opacity = 0
@@ -213,7 +238,10 @@ class CursorHighlightView: NSView {
         guard let window = self.window,
               let cursorLayer = activeCursorLayer,
               let outlineLayer = activeCursorOutlineLayer,
-              let accentLayer = activeCursorAccentLayer else { return }
+              let accentLayer = activeCursorAccentLayer,
+              let strandLayer = activeCursorStrandLayer,
+              let ferruleLayer = activeCursorFerruleLayer,
+              let glossLayer = activeCursorGlossLayer else { return }
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -227,6 +255,9 @@ class CursorHighlightView: NSView {
             let localPoint = convert(windowPoint, from: nil)
 
             accentLayer.opacity = 0
+            strandLayer.opacity = 0
+            ferruleLayer.opacity = 0
+            glossLayer.opacity = 0
 
             switch manager.toolCursorKind {
             case .system:
@@ -328,19 +359,42 @@ class CursorHighlightView: NSView {
                     x: localPoint.x + dotRadius * 0.643,
                     y: localPoint.y + dotRadius * 0.766)
 
-                outlineLayer.path = paths.gold
+                let inkScale = size / 54.0
+
+                outlineLayer.path = paths.tuft
                 outlineLayer.position = nibPoint
-                outlineLayer.fillColor = Self.nibGoldCG
-                outlineLayer.strokeColor = Self.nibGoldDarkCG
-                outlineLayer.lineWidth = 1
+                outlineLayer.fillColor = Self.tuftCG
+                outlineLayer.strokeColor = Self.cartoonInkCG
+                outlineLayer.lineWidth = 2.4 * inkScale
                 outlineLayer.opacity = 1
+
+                strandLayer.path = paths.strands
+                strandLayer.position = nibPoint
+                strandLayer.fillColor = nil
+                strandLayer.strokeColor = Self.tuftDarkCG
+                strandLayer.lineWidth = 1.8 * inkScale
+                strandLayer.opacity = 1
+
+                ferruleLayer.path = paths.ferrule
+                ferruleLayer.position = nibPoint
+                ferruleLayer.fillColor = Self.ferruleGoldCG
+                ferruleLayer.strokeColor = Self.cartoonInkCG
+                ferruleLayer.lineWidth = 2.4 * inkScale
+                ferruleLayer.opacity = 1
 
                 accentLayer.path = paths.barrel
                 accentLayer.position = nibPoint
-                accentLayer.fillColor = Self.barrelDarkCG
-                accentLayer.strokeColor = Self.whiteCG
-                accentLayer.lineWidth = 1.2
+                accentLayer.fillColor = Self.barrelBlueCG
+                accentLayer.strokeColor = Self.cartoonInkCG
+                accentLayer.lineWidth = 2.4 * inkScale
                 accentLayer.opacity = 1
+
+                glossLayer.path = paths.gloss
+                glossLayer.position = nibPoint
+                glossLayer.fillColor = nil
+                glossLayer.strokeColor = Self.glossBlueCG
+                glossLayer.lineWidth = 2.2 * inkScale
+                glossLayer.opacity = 0.9
 
                 cursorLayer.path = inkContactDotPath(diameter: max(manager.effectiveStrokeWidth, 2))
                 cursorLayer.position = localPoint
@@ -357,6 +411,9 @@ class CursorHighlightView: NSView {
             cursorLayer.opacity = 0
             outlineLayer.opacity = 0
             accentLayer.opacity = 0
+            strandLayer.opacity = 0
+            ferruleLayer.opacity = 0
+            glossLayer.opacity = 0
         }
 
         CATransaction.commit()
@@ -432,49 +489,90 @@ class CursorHighlightView: NSView {
         return cachedCrosshairPath!
     }
 
-    private func brushPaths(for size: CGFloat) -> (gold: CGPath, barrel: CGPath, ink: CGPath) {
-        if size != cachedBrushSize || cachedBrushGoldPath == nil {
-            let transform = Self.nibTransform(size: size)
-            cachedBrushGoldPath = Self.nibGoldPath(with: transform)
-            cachedBrushBarrelPath = Self.nibBarrelPath(with: transform)
-            cachedBrushInkPath = Self.nibInkPath(with: transform)
+    private func brushPaths(for size: CGFloat)
+        -> (tuft: CGPath, strands: CGPath, ferrule: CGPath, barrel: CGPath, gloss: CGPath)
+    {
+        if size != cachedBrushSize || cachedBrushTuftPath == nil {
+            let transform = Self.brushTransform(size: size)
+            cachedBrushTuftPath = Self.brushTuftPath(with: transform)
+            cachedBrushStrandPath = Self.brushStrandPath(with: transform)
+            cachedBrushFerrulePath = Self.brushFerrulePath(with: transform)
+            cachedBrushBarrelPath = Self.brushBarrelPath(with: transform)
+            cachedBrushGlossPath = Self.brushGlossPath(with: transform)
             cachedBrushSize = size
         }
-        return (cachedBrushGoldPath!, cachedBrushBarrelPath!, cachedBrushInkPath!)
+        return (
+            cachedBrushTuftPath!, cachedBrushStrandPath!, cachedBrushFerrulePath!,
+            cachedBrushBarrelPath!, cachedBrushGlossPath!
+        )
     }
 
-    private static func nibTransform(size: CGFloat) -> CGAffineTransform {
-        let scale = size / 28.0
+    private static func brushTransform(size: CGFloat) -> CGAffineTransform {
+        let scale = size / 54.0
         return CGAffineTransform(rotationAngle: -40 * .pi / 180)
             .scaledBy(x: scale, y: scale)
     }
 
-    private static func nibGoldPath(with transform: CGAffineTransform) -> CGPath {
+    private static func brushTuftPath(with transform: CGAffineTransform) -> CGPath {
         let path = CGMutablePath()
         path.move(to: .zero, transform: transform)
-        path.addLine(to: CGPoint(x: -4, y: 12), transform: transform)
-        path.addQuadCurve(to: CGPoint(x: 4, y: 12), control: CGPoint(x: 0, y: 18), transform: transform)
+        path.addCurve(
+            to: CGPoint(x: -9.5, y: 26),
+            control1: CGPoint(x: -7, y: 7),
+            control2: CGPoint(x: -11, y: 14),
+            transform: transform)
+        path.addLine(to: CGPoint(x: 9.5, y: 26), transform: transform)
+        path.addCurve(
+            to: .zero,
+            control1: CGPoint(x: 11, y: 14),
+            control2: CGPoint(x: 7, y: 7),
+            transform: transform)
         path.closeSubpath()
-        path.addRect(CGRect(x: -3.5, y: 16, width: 7, height: 4), transform: transform)
         return path
     }
 
-    private static func nibBarrelPath(with transform: CGAffineTransform) -> CGPath {
-        var t = transform
-        return CGPath(
-            roundedRect: CGRect(x: -3.5, y: 20, width: 7, height: 18),
-            cornerWidth: 3.5,
-            cornerHeight: 3.5,
-            transform: &t
-        )
+    private static func brushStrandPath(with transform: CGAffineTransform) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -4.5, y: 8), transform: transform)
+        path.addCurve(
+            to: CGPoint(x: -6, y: 25),
+            control1: CGPoint(x: -6, y: 13),
+            control2: CGPoint(x: -6.5, y: 18),
+            transform: transform)
+        path.move(to: CGPoint(x: 4.5, y: 8), transform: transform)
+        path.addCurve(
+            to: CGPoint(x: 6, y: 25),
+            control1: CGPoint(x: 6, y: 13),
+            control2: CGPoint(x: 6.5, y: 18),
+            transform: transform)
+        return path
     }
 
-    private static func nibInkPath(with transform: CGAffineTransform) -> CGPath {
+    private static func brushFerrulePath(with transform: CGAffineTransform) -> CGPath {
         var t = transform
         return CGPath(
-            ellipseIn: CGRect(x: -1.8, y: 7.7, width: 3.6, height: 3.6),
-            transform: &t
-        )
+            roundedRect: CGRect(x: -10.5, y: 26, width: 21, height: 12),
+            cornerWidth: 3, cornerHeight: 3, transform: &t)
+    }
+
+    private static func brushBarrelPath(with transform: CGAffineTransform) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -7.5, y: 38), transform: transform)
+        path.addLine(to: CGPoint(x: -7.5, y: 68), transform: transform)
+        path.addQuadCurve(
+            to: CGPoint(x: 0, y: 76), control: CGPoint(x: -7.5, y: 76), transform: transform)
+        path.addQuadCurve(
+            to: CGPoint(x: 7.5, y: 68), control: CGPoint(x: 7.5, y: 76), transform: transform)
+        path.addLine(to: CGPoint(x: 7.5, y: 38), transform: transform)
+        path.closeSubpath()
+        return path
+    }
+
+    private static func brushGlossPath(with transform: CGAffineTransform) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -3.5, y: 44), transform: transform)
+        path.addLine(to: CGPoint(x: -3.5, y: 66), transform: transform)
+        return path
     }
 
     private func outlineCursorPaths(for scale: CGFloat) -> (outer: CGPath, inner: CGPath) {
@@ -491,9 +589,24 @@ class CursorHighlightView: NSView {
 
     private static let blackCG: CGColor = NSColor.black.cgColor
     private static let whiteCG: CGColor = NSColor.white.cgColor
-    private static let nibGoldCG: CGColor = NSColor(red: 0.89, green: 0.70, blue: 0.25, alpha: 1).cgColor
-    private static let nibGoldDarkCG: CGColor = NSColor(red: 0.48, green: 0.37, blue: 0.12, alpha: 1).cgColor
-    private static let barrelDarkCG: CGColor = NSColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1).cgColor
+    private static let cartoonInkCG: CGColor = NSColor(
+        red: 0.078, green: 0.078, blue: 0.086, alpha: 1
+    ).cgColor
+    private static let tuftCG: CGColor = NSColor(
+        red: 0.788, green: 0.514, blue: 0.212, alpha: 1
+    ).cgColor
+    private static let tuftDarkCG: CGColor = NSColor(
+        red: 0.561, green: 0.353, blue: 0.118, alpha: 1
+    ).cgColor
+    private static let ferruleGoldCG: CGColor = NSColor(
+        red: 1.0, green: 0.824, blue: 0.247, alpha: 1
+    ).cgColor
+    private static let barrelBlueCG: CGColor = NSColor(
+        red: 0.180, green: 0.369, blue: 0.659, alpha: 1
+    ).cgColor
+    private static let glossBlueCG: CGColor = NSColor(
+        red: 0.494, green: 0.643, blue: 0.867, alpha: 1
+    ).cgColor
 
     private static let cursorOuterPath: CGPath = {
         let path = CGMutablePath()
