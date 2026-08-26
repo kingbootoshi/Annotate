@@ -290,7 +290,7 @@ class CursorHighlightView: NSView {
                 outlineLayer.path = paths.outer
                 outlineLayer.position = localPoint
                 outlineLayer.fillColor = nil
-                outlineLayer.strokeColor = manager.annotationColorCG
+                outlineLayer.strokeColor = manager.inkColorCG
                 outlineLayer.lineWidth = strokeWidth
                 outlineLayer.opacity = 1
 

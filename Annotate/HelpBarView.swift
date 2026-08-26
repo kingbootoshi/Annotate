@@ -140,8 +140,9 @@ struct HelpBarView: View {
 
     private func keycap(_ text: String, lit: Bool) -> some View {
         Text(text)
-            .font(.system(size: 8.5, weight: .semibold, design: .monospaced))
-            .foregroundStyle(Color.white.opacity(lit ? 0.9 : 0.45))
+            .font(.system(size: 10, weight: .bold, design: .monospaced))
+            .foregroundStyle(Color.white.opacity(lit ? 0.95 : 0.55))
+            .fixedSize()
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(
