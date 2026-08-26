@@ -20,7 +20,9 @@ enum ShortcutKey: String, CaseIterable {
     case toggleBoard = "b"
     case toggleClickEffects = "k"
 
-    var defaultKey: String { rawValue }
+    var defaultKey: String {
+        self == .select ? "s" : rawValue
+    }
 
     var displayName: String {
         switch self {
