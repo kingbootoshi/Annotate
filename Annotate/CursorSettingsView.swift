@@ -224,35 +224,46 @@ private struct ActiveCursorPreview: View {
 
                 context.stroke(path, with: .color(Color(color)), lineWidth: max(2.5, size / 5))
             case .brush:
-                let unit = size * 0.7
-                let tip = CGPoint(x: center.x - unit * 0.7, y: center.y + unit * 0.7)
-                let axis = CGPoint(x: 0.7071, y: -0.7071)
-                let perp = CGPoint(x: 0.7071, y: 0.7071)
+                let scale = size / 28.0
+                let tip = CGPoint(x: center.x - 7 * scale, y: center.y + 13 * scale)
+                let angle = -40.0 * .pi / 180.0
 
-                func point(_ t: CGFloat, _ w: CGFloat) -> CGPoint {
-                    CGPoint(
-                        x: tip.x + (axis.x * t + perp.x * w) * unit,
-                        y: tip.y + (axis.y * t + perp.y * w) * unit
-                    )
+                func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                    let rx = x * cos(angle) - y * sin(angle)
+                    let ry = x * sin(angle) + y * cos(angle)
+                    return CGPoint(x: tip.x + rx * scale, y: tip.y - ry * scale)
                 }
 
-                var bristle = Path()
-                bristle.move(to: tip)
-                bristle.addQuadCurve(to: point(0.55, 0.2), control: point(0.19, 0.22))
-                bristle.addQuadCurve(to: point(0.55, -0.2), control: point(0.66, 0))
-                bristle.addQuadCurve(to: tip, control: point(0.19, -0.22))
-                bristle.closeSubpath()
+                var gold = Path()
+                gold.move(to: tip)
+                gold.addLine(to: point(-4, 12))
+                gold.addQuadCurve(to: point(4, 12), control: point(0, 18))
+                gold.closeSubpath()
+                gold.move(to: point(-3.5, 16))
+                gold.addLine(to: point(3.5, 16))
+                gold.addLine(to: point(3.5, 20))
+                gold.addLine(to: point(-3.5, 20))
+                gold.closeSubpath()
 
-                var handle = Path()
-                handle.move(to: point(0.62, 0.11))
-                handle.addLine(to: point(1.45, 0.11))
-                handle.addLine(to: point(1.45, -0.11))
-                handle.addLine(to: point(0.62, -0.11))
-                handle.closeSubpath()
+                var barrel = Path()
+                barrel.move(to: point(-3.5, 20))
+                barrel.addLine(to: point(3.5, 20))
+                barrel.addLine(to: point(3.5, 38))
+                barrel.addLine(to: point(-3.5, 38))
+                barrel.closeSubpath()
 
-                context.fill(bristle, with: .color(Color(color)))
-                context.fill(handle, with: .color(.black))
-                context.stroke(handle, with: .color(.white), lineWidth: 1)
+                let inkCenter = point(0, 9.5)
+                let inkRadius = 1.8 * scale
+                let ink = Path(ellipseIn: CGRect(
+                    x: inkCenter.x - inkRadius, y: inkCenter.y - inkRadius,
+                    width: inkRadius * 2, height: inkRadius * 2))
+
+                let goldColor = Color(red: 0.89, green: 0.70, blue: 0.25)
+                context.fill(gold, with: .color(goldColor))
+                context.stroke(gold, with: .color(Color(red: 0.48, green: 0.37, blue: 0.12)), lineWidth: 1)
+                context.fill(barrel, with: .color(Color(red: 0.11, green: 0.11, blue: 0.13)))
+                context.stroke(barrel, with: .color(.white), lineWidth: 1)
+                context.fill(ink, with: .color(Color(color)))
             }
         }
         .frame(width: 40, height: 40)

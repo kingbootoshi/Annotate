@@ -43,3 +43,5 @@ bin/
 *Sample*.xml
 *.backup
 test_*
+sfx-candidates/
+design-catalogue/
