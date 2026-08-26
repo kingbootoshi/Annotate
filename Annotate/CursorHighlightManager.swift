@@ -156,6 +156,17 @@ class CursorHighlightManager: @unchecked Sendable {
         }
     }
 
+    var annotationLineWidth: CGFloat = 3 {
+        didSet {
+            guard annotationLineWidth != oldValue else { return }
+            notifyStateChanged()
+        }
+    }
+
+    var strokeCursorSize: CGFloat {
+        min(max(10 + annotationLineWidth * 1.8, 12), 56)
+    }
+
     var toolCursorKind: ToolCursorKind {
         switch activeTool {
         case .pen, .highlighter:
@@ -232,7 +243,7 @@ class CursorHighlightManager: @unchecked Sendable {
     }
 
     var shouldShowCursorHighlight: Bool {
-        cursorHighlightAvailable && !isMouseDown
+        cursorHighlightAvailable && !isMouseDown && toolCursorKind == .system
     }
 
     var hasActiveAnimation: Bool {

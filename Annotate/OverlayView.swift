@@ -102,7 +102,12 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
     }
     var previousTool: ToolType = .pen
-    var currentLineWidth: CGFloat = 3.0
+    var currentLineWidth: CGFloat = 3.0 {
+        didSet {
+            guard currentLineWidth != oldValue else { return }
+            CursorHighlightManager.shared.annotationLineWidth = currentLineWidth
+        }
+    }
 
     var fadeMode: Bool = true
     let fadeDuration: CFTimeInterval = 1.25
