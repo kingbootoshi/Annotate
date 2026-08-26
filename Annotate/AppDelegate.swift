@@ -837,54 +837,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         SettingsWindowManager.shared.show()
     }
 
-    /// Updates the status bar icon by layering a colored circle with a pencil.
-    /// - Parameter color: The color to apply to the circle.
+    /// Updates the status bar icon: a bold pointed paintbrush whose tip carries the current color.
+    /// - Parameter color: The current annotation color (gray renders a plain template brush).
     func updateStatusBarIcon(with color: NSColor) {
-        let pencilSymbolName = "pencil"
-        let iconSize = NSSize(width: 18, height: 18)
-
-        let compositeImage = NSImage(size: iconSize)
-        compositeImage.lockFocus()
-
-        // Draw the circle outline
-        let circleFrame = NSRect(origin: NSPoint(x: 1, y: 1), size: NSSize(width: 16, height: 16))  // Slight inset for stroke
-        let circlePath = NSBezierPath(ovalIn: circleFrame)
-        color.setStroke()
-        circlePath.lineWidth = 1.5
-        circlePath.stroke()
-
-        // Load the pencil image
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
         guard
-            let pencilImage = NSImage(
-                systemSymbolName: pencilSymbolName, accessibilityDescription: "Pencil")
-        else {
-            print("Failed to load system symbol: \(pencilSymbolName)")
-            return
+            let brush = NSImage(
+                systemSymbolName: "paintbrush.pointed.fill", accessibilityDescription: "Annotate")?
+                .withSymbolConfiguration(config)
+        else { return }
+
+        let isNeutral = color == .gray
+        let iconSize = NSSize(width: 18, height: 18)
+        let image = NSImage(size: iconSize)
+        image.lockFocus()
+
+        let brushRect = NSRect(
+            x: (iconSize.width - brush.size.width) / 2,
+            y: (iconSize.height - brush.size.height) / 2,
+            width: brush.size.width,
+            height: brush.size.height
+        )
+        brush.draw(in: brushRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+
+        if !isNeutral {
+            color.set()
+            NSRect(origin: .zero, size: iconSize).fill(using: .sourceIn)
         }
 
-        let coloredPencil = pencilImage.copy() as! NSImage
-        coloredPencil.lockFocus()
-        NSColor.white.set()
-        let pencilBounds = NSRect(origin: .zero, size: pencilImage.size)
-        pencilBounds.fill(using: .sourceIn)  // Tint the image white
-        coloredPencil.unlockFocus()
-
-        // Center and draw the white pencil icon
-        let pencilSize = NSSize(width: 11, height: 11)
-        let pencilOrigin = NSPoint(
-            x: (iconSize.width - pencilSize.width) / 2, y: (iconSize.height - pencilSize.height) / 2
-        )
-        coloredPencil.draw(
-            in: NSRect(origin: pencilOrigin, size: pencilSize),
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1.0)
-
-        compositeImage.unlockFocus()
-        compositeImage.isTemplate = false
-
-        // Set the composite image to the status bar button
-        statusItem.button?.image = compositeImage
+        image.unlockFocus()
+        image.isTemplate = isNeutral
+        statusItem.button?.image = image
     }
     
     func setupApplicationMenu() {
