@@ -108,7 +108,9 @@ class CursorHighlightView: NSView {
             let windowPoint = window.convertPoint(fromScreen: globalPosition)
             let localPoint = convert(windowPoint, from: nil)
 
-            let size = manager.currentHoldRingSize
+            let size = max(
+                manager.currentHoldRingSize
+                    - (manager.holdRingMatchesStroke ? strokeWidth : 0), 2)
             let rect = CGRect(
                 x: -size / 2,
                 y: -size / 2,
