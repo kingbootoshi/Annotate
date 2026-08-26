@@ -22,6 +22,7 @@ class OverlayWindow: NSPanel {
     private var quickPicker: QuickPickerView?
     private var acceptedMouseMovedBeforePicker = false
     private var pickerMoveMonitor: Any?
+    private var lastLiveShapeRect: NSRect?
     private var feedbackRemovalTask: DispatchWorkItem?
     
     // Create undo manager for this window
@@ -227,6 +228,7 @@ class OverlayWindow: NSPanel {
             NotificationCenter.default.post(name: .cursorHighlightNeedsUpdate, object: nil)
         }
 
+        lastLiveShapeRect = nil
         let startPoint = event.locationInWindow
         anchorPoint = startPoint
         overlayView.lastMousePosition = startPoint  // Track mouse position for paste
@@ -448,9 +450,8 @@ class OverlayWindow: NSPanel {
             // No notification needed - animation loop already running from mouseDown
         }
 
-        overlayView.needsDisplay = true
         let currentPoint = event.locationInWindow
-        overlayView.lastMousePosition = currentPoint  // Track mouse position for paste
+        overlayView.lastMousePosition = currentPoint
         
         // Handle rectangle selection drawing
         if overlayView.currentTool == .select && overlayView.isDrawingSelectionRect {
@@ -495,34 +496,47 @@ class OverlayWindow: NSPanel {
         switch overlayView.currentTool {
         case .pen:
             let t = CACurrentMediaTime()
+            let prev = overlayView.currentPath?.points.last?.point ?? currentPoint
             if isShiftConstraintActive {
                 updatePathWithShiftConstraint(
                     path: &overlayView.currentPath,
                     to: currentPoint,
                     timestamp: t
                 )
+                overlayView.needsDisplay = true
             } else {
                 overlayView.currentPath?.points.append(TimedPoint(point: currentPoint, timestamp: t))
+                invalidateLiveSegment(from: prev, to: currentPoint, pad: overlayView.currentLineWidth + 6)
             }
-        case .arrow:
-            overlayView.currentArrow?.endPoint = isShiftConstraintActive
-                ? snapToStraightLine(from: anchorPoint, to: currentPoint)
-                : currentPoint
-        case .line:
-            overlayView.currentLine?.endPoint = isShiftConstraintActive
-                ? snapToStraightLine(from: anchorPoint, to: currentPoint)
-                : currentPoint
         case .highlighter:
             let t = CACurrentMediaTime()
+            let prev = overlayView.currentHighlight?.points.last?.point ?? currentPoint
             if isShiftConstraintActive {
                 updatePathWithShiftConstraint(
                     path: &overlayView.currentHighlight,
                     to: currentPoint,
                     timestamp: t
                 )
+                overlayView.needsDisplay = true
             } else {
                 overlayView.currentHighlight?.points.append(
                     TimedPoint(point: currentPoint, timestamp: t))
+                invalidateLiveSegment(from: prev, to: currentPoint, pad: overlayView.currentLineWidth * 2 + 8)
+            }
+        case .arrow:
+            overlayView.currentArrow?.endPoint = isShiftConstraintActive
+                ? snapToStraightLine(from: anchorPoint, to: currentPoint)
+                : currentPoint
+            if let arrow = overlayView.currentArrow {
+                invalidateLiveShape(
+                    rectSpanning(arrow.startPoint, arrow.endPoint, pad: max(arrow.lineWidth * 4, 30)))
+            }
+        case .line:
+            overlayView.currentLine?.endPoint = isShiftConstraintActive
+                ? snapToStraightLine(from: anchorPoint, to: currentPoint)
+                : currentPoint
+            if let line = overlayView.currentLine {
+                invalidateLiveShape(rectSpanning(line.startPoint, line.endPoint, pad: line.lineWidth + 6))
             }
         case .rectangle:
             var newStart = anchorPoint
@@ -542,6 +556,8 @@ class OverlayWindow: NSPanel {
 
             overlayView.currentRectangle?.startPoint = newStart
             overlayView.currentRectangle?.endPoint = newEnd
+            invalidateLiveShape(
+                rectSpanning(newStart, newEnd, pad: overlayView.currentLineWidth + 6))
         case .circle:
             var newStart = anchorPoint
             var newEnd = currentPoint
@@ -560,6 +576,8 @@ class OverlayWindow: NSPanel {
 
             overlayView.currentCircle?.startPoint = newStart
             overlayView.currentCircle?.endPoint = newEnd
+            invalidateLiveShape(
+                rectSpanning(newStart, newEnd, pad: overlayView.currentLineWidth + 6))
         case .text:
             break
         case .counter:
@@ -568,8 +586,25 @@ class OverlayWindow: NSPanel {
             break
         case .eraser:
             overlayView.eraseAtPoint(currentPoint)
+            overlayView.needsDisplay = true
         }
-        overlayView.needsDisplay = true
+    }
+
+    private func rectSpanning(_ a: NSPoint, _ b: NSPoint, pad: CGFloat) -> NSRect {
+        NSRect(
+            x: min(a.x, b.x), y: min(a.y, b.y),
+            width: abs(a.x - b.x), height: abs(a.y - b.y)
+        ).insetBy(dx: -pad, dy: -pad)
+    }
+
+    private func invalidateLiveSegment(from: NSPoint, to: NSPoint, pad: CGFloat) {
+        overlayView.setNeedsDisplay(rectSpanning(from, to, pad: pad))
+    }
+
+    private func invalidateLiveShape(_ rect: NSRect) {
+        let dirty = lastLiveShapeRect.map { $0.union(rect) } ?? rect
+        overlayView.setNeedsDisplay(dirty)
+        lastLiveShapeRect = rect
     }
 
     override func mouseUp(with event: NSEvent) {

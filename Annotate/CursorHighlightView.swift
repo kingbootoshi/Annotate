@@ -332,7 +332,7 @@ class CursorHighlightView: NSView {
                 accentLayer.lineWidth = 1.2
                 accentLayer.opacity = 1
 
-                cursorLayer.path = paths.ink
+                cursorLayer.path = inkContactDotPath(diameter: max(manager.annotationLineWidth, 2))
                 cursorLayer.position = localPoint
                 cursorLayer.fillColor = manager.annotationColorCG
                 cursorLayer.strokeColor = nil
@@ -380,6 +380,20 @@ class CursorHighlightView: NSView {
             cachedScreenshotCrosshairSize = size
         }
         return cachedScreenshotCrosshairPath!
+    }
+
+    private var cachedInkDotPath: CGPath?
+    private var cachedInkDotSize: CGFloat = 0
+
+    private func inkContactDotPath(diameter: CGFloat) -> CGPath {
+        if diameter != cachedInkDotSize || cachedInkDotPath == nil {
+            cachedInkDotPath = CGPath(
+                ellipseIn: CGRect(
+                    x: -diameter / 2, y: -diameter / 2, width: diameter, height: diameter),
+                transform: nil)
+            cachedInkDotSize = diameter
+        }
+        return cachedInkDotPath!
     }
 
     private func circlePaths(for size: CGFloat) -> (outer: CGPath, inner: CGPath) {

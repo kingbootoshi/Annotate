@@ -39,9 +39,9 @@ struct CursorSettingsView: View {
                     CursorHighlightManager.shared.activeCursorStyle = newValue
                 }
 
-                if activeCursorStyle != .none && activeCursorStyle != .outline {
+                if activeCursorStyle != .none {
                     SettingsSliderRow(
-                        title: "Cursor Size",
+                        title: "Eraser Ring Size",
                         value: $activeCursorSize,
                         range: 8...24,
                         boundsText: { "\(Int($0))" }
