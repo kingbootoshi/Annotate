@@ -11,7 +11,7 @@ Stroke width has exactly one owner per layer, one feed between layers, and exact
 2. **Runtime drawing truth:** `OverlayView.currentLineWidth`. Every width mutation assigns it on all overlay views; strokes draw with it.
 3. **Preview mirror:** `CursorHighlightManager.annotationLineWidth`, fed *only* by `OverlayView.currentLineWidth`'s `didSet`. Cursor rendering reads width exclusively from the manager (`annotationLineWidth` / derived `strokeCursorSize`).
 
-Ink-contact previews are **exact-size**: the brush cursor's ink dot and the "Circle" cursor style render a diameter equal to `annotationLineWidth` — the pointer shows what the stroke lays down.
+Ink-contact previews are **exact-size**: the brush cursor's ink dot and the "Circle" cursor style render a diameter equal to `effectiveStrokeWidth` (nominal width × the tool-owned `ToolType.strokeWidthMultiplier`) — the pointer shows exactly what the stroke lays down, highlighter included. The multiplier lives on `ToolType` alone; renderer, cursor, and dirty-rect padding all derive from it.
 
 `activeCursorSize` is the eraser ring's hit-radius only. It never gates or scales a drawing-tool cursor.
 

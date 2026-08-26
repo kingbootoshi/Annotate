@@ -27,6 +27,13 @@ enum ToolType: String, CaseIterable {
         case .select: return "Select"
         }
     }
+
+    /// Nominal-to-rendered stroke width ratio (ADR-0002): the single owner of how a
+    /// tool fattens its stroke. Renderer, cursor previews, and dirty-rect padding all
+    /// derive from this — never a second inline constant.
+    var strokeWidthMultiplier: CGFloat {
+        self == .highlighter ? 4.67 : 1
+    }
 }
 
 /// Which tool becomes active each time the overlay is activated. `.lastUsed` keeps the

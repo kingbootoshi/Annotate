@@ -283,7 +283,7 @@ class CursorHighlightView: NSView {
                 cursorLayer.opacity = 1
 
             case .circle:
-                let size = max(4, manager.annotationLineWidth)
+                let size = max(4, manager.effectiveStrokeWidth)
                 let strokeWidth: CGFloat = 1.5
                 let paths = circlePaths(for: size)
 
@@ -299,7 +299,7 @@ class CursorHighlightView: NSView {
                 cursorLayer.fillColor = manager.annotationColorCG
                 cursorLayer.strokeColor = nil
                 cursorLayer.lineWidth = 0
-                cursorLayer.opacity = manager.annotationLineWidth >= 12 ? 1 : 0
+                cursorLayer.opacity = manager.effectiveStrokeWidth >= 12 ? 1 : 0
 
             case .crosshair:
                 let size = manager.strokeCursorSize
@@ -332,7 +332,7 @@ class CursorHighlightView: NSView {
                 accentLayer.lineWidth = 1.2
                 accentLayer.opacity = 1
 
-                cursorLayer.path = inkContactDotPath(diameter: max(manager.annotationLineWidth, 2))
+                cursorLayer.path = inkContactDotPath(diameter: max(manager.effectiveStrokeWidth, 2))
                 cursorLayer.position = localPoint
                 cursorLayer.fillColor = manager.annotationColorCG
                 cursorLayer.strokeColor = nil

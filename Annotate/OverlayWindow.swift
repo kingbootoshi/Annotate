@@ -521,7 +521,10 @@ class OverlayWindow: NSPanel {
             } else {
                 overlayView.currentHighlight?.points.append(
                     TimedPoint(point: currentPoint, timestamp: t))
-                invalidateLiveSegment(from: prev, to: currentPoint, pad: overlayView.currentLineWidth * 2 + 8)
+                invalidateLiveSegment(
+                    from: prev, to: currentPoint,
+                    pad: overlayView.currentLineWidth
+                        * ToolType.highlighter.strokeWidthMultiplier / 2 + 6)
             }
         case .arrow:
             overlayView.currentArrow?.endPoint = isShiftConstraintActive

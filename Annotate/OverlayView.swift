@@ -877,7 +877,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
                 : path.color.withAlphaComponent(1)
 
             strokeColor.setStroke()
-            line.lineWidth = isHighlighter ? path.lineWidth * 4.67 : path.lineWidth
+            line.lineWidth = path.lineWidth * (isHighlighter ? ToolType.highlighter : ToolType.pen).strokeWidthMultiplier
             line.lineJoinStyle = .round
             line.lineCapStyle = .round
             line.stroke()
@@ -1001,11 +1001,10 @@ class OverlayView: NSView, NSTextFieldDelegate {
 
         if tool == .highlighter {
             adaptedColor.withAlphaComponent(0.5).setStroke()
-            bezierPath.lineWidth = path.lineWidth * 4.67  // Maintain the ratio: 14/3 ≈ 4.67
         } else {
             adaptedColor.setStroke()
-            bezierPath.lineWidth = path.lineWidth
         }
+        bezierPath.lineWidth = path.lineWidth * tool.strokeWidthMultiplier
 
         bezierPath.lineJoinStyle = .round
         bezierPath.lineCapStyle = .round
@@ -2115,7 +2114,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
     private func hitTestHighlightPath(_ path: DrawingPath, point: NSPoint) -> Bool {
         guard path.points.count >= 2 else {
             if path.points.count == 1 {
-                let highlighterWidth = path.lineWidth * 4.67
+                let highlighterWidth = path.lineWidth * ToolType.highlighter.strokeWidthMultiplier
                 let baseTolerance = highlighterWidth / 2.0
                 let minClickableTolerance: CGFloat = 5.0
                 let tolerance = max(baseTolerance, minClickableTolerance)
@@ -2127,7 +2126,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
             return false
         }
         
-        let highlighterWidth = path.lineWidth * 4.67
+        let highlighterWidth = path.lineWidth * ToolType.highlighter.strokeWidthMultiplier
         let baseTolerance = highlighterWidth / 2.0
         let minClickableTolerance: CGFloat = 5.0
         let tolerance = max(baseTolerance, minClickableTolerance)

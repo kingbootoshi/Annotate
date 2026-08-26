@@ -167,6 +167,10 @@ class CursorHighlightManager: @unchecked Sendable {
         min(max(10 + annotationLineWidth * 1.8, 12), 56)
     }
 
+    var effectiveStrokeWidth: CGFloat {
+        annotationLineWidth * activeTool.strokeWidthMultiplier
+    }
+
     var toolCursorKind: ToolCursorKind {
         switch activeTool {
         case .pen, .highlighter:
