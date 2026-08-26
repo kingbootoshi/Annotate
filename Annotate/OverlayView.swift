@@ -601,35 +601,29 @@ class OverlayView: NSView, NSTextFieldDelegate {
         let now = fadeMode ? CACurrentMediaTime() : 0
 
         // Draw arrows
-        if fadeMode {
-            var aliveArrows: [Arrow] = []
-            for arrow in arrows {
-                if let creationTime = arrow.creationTime {
-                    let age = now - creationTime
-                    if age < fadeDuration {
-                        let alpha = alphaForAge(age)
-                        drawArrow(
-                            from: arrow.startPoint,
-                            to: arrow.endPoint,
-                            color: arrow.color.withAlphaComponent(alpha),
-                            lineWidth: arrow.lineWidth
-                        )
-                        aliveArrows.append(arrow)
-                    }
-                } else {
+        var aliveArrows: [Arrow] = []
+        for arrow in arrows {
+            if fadeMode, let creationTime = arrow.creationTime {
+                let age = now - creationTime
+                if age < fadeDuration {
+                    let alpha = alphaForAge(age)
                     drawArrow(
-                        from: arrow.startPoint, to: arrow.endPoint, color: arrow.color,
-                        lineWidth: arrow.lineWidth)
+                        from: arrow.startPoint,
+                        to: arrow.endPoint,
+                        color: arrow.color.withAlphaComponent(alpha),
+                        lineWidth: arrow.lineWidth
+                    )
+                    aliveArrows.append(arrow)
+                }
+            } else {
+                drawArrow(from: arrow.startPoint, to: arrow.endPoint, color: arrow.color, lineWidth: arrow.lineWidth)
+                if fadeMode {
                     aliveArrows.append(arrow)
                 }
             }
+        }
+        if fadeMode {
             arrows = aliveArrows
-        } else {
-            for arrow in arrows {
-                drawArrow(
-                    from: arrow.startPoint, to: arrow.endPoint, color: arrow.color,
-                    lineWidth: arrow.lineWidth)
-            }
         }
 
         // Draw current arrow being drawn
@@ -638,35 +632,29 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw lines
-        if fadeMode {
-            var aliveLines: [Line] = []
-            for line in lines {
-                if let creationTime = line.creationTime {
-                    let age = now - creationTime
-                    if age < fadeDuration {
-                        let alpha = alphaForAge(age)
-                        drawLine(
-                            from: line.startPoint,
-                            to: line.endPoint,
-                            color: line.color.withAlphaComponent(alpha),
-                            lineWidth: line.lineWidth
-                        )
-                        aliveLines.append(line)
-                    }
-                } else {
+        var aliveLines: [Line] = []
+        for line in lines {
+            if fadeMode, let creationTime = line.creationTime {
+                let age = now - creationTime
+                if age < fadeDuration {
+                    let alpha = alphaForAge(age)
                     drawLine(
-                        from: line.startPoint, to: line.endPoint, color: line.color,
-                        lineWidth: line.lineWidth)
+                        from: line.startPoint,
+                        to: line.endPoint,
+                        color: line.color.withAlphaComponent(alpha),
+                        lineWidth: line.lineWidth
+                    )
+                    aliveLines.append(line)
+                }
+            } else {
+                drawLine(from: line.startPoint, to: line.endPoint, color: line.color, lineWidth: line.lineWidth)
+                if fadeMode {
                     aliveLines.append(line)
                 }
             }
+        }
+        if fadeMode {
             lines = aliveLines
-        } else {
-            for line in lines {
-                drawLine(
-                    from: line.startPoint, to: line.endPoint, color: line.color,
-                    lineWidth: line.lineWidth)
-            }
         }
 
         // Draw current line being drawn
@@ -675,21 +663,21 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw existing paths
-        if fadeMode {
-            var alivePaths: [DrawingPath] = []
-            for path in paths {
+        var alivePaths: [DrawingPath] = []
+        for path in paths {
+            if fadeMode {
                 let pathRemaining = drawPathWithFading(path, now: now, isHighlighter: false)
                 if !pathRemaining.isEmpty {
                     var newPath = path
                     newPath.points = pathRemaining
                     alivePaths.append(newPath)
                 }
-            }
-            paths = alivePaths
-        } else {
-            for path in paths {
+            } else {
                 drawPath(path, tool: .pen)
             }
+        }
+        if fadeMode {
+            paths = alivePaths
         }
 
         if let path = currentPath {
@@ -697,21 +685,21 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw highlighter paths
-        if fadeMode {
-            var aliveHighlights: [DrawingPath] = []
-            for path in highlightPaths {
+        var aliveHighlights: [DrawingPath] = []
+        for path in highlightPaths {
+            if fadeMode {
                 let pathRemaining = drawPathWithFading(path, now: now, isHighlighter: true)
                 if !pathRemaining.isEmpty {
                     var newHighlight = path
                     newHighlight.points = pathRemaining
                     aliveHighlights.append(newHighlight)
                 }
-            }
-            highlightPaths = aliveHighlights
-        } else {
-            for path in highlightPaths {
+            } else {
                 drawPath(path, tool: .highlighter)
             }
+        }
+        if fadeMode {
+            highlightPaths = aliveHighlights
         }
 
         if let highlight = currentHighlight {
@@ -719,53 +707,47 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         // Draw rectangles
-        if fadeMode {
-            var aliveRects: [Rectangle] = []
-            for rect in rectangles {
-                if let creationTime = rect.creationTime {
-                    let age = now - creationTime
-                    if age < fadeDuration {
-                        drawRectangle(rect, alpha: alphaForAge(age))
-                        aliveRects.append(rect)
-                    }
-                } else {
-                    drawRectangle(rect, alpha: 1.0)
+        var aliveRects: [Rectangle] = []
+        for rect in rectangles {
+            if fadeMode, let creationTime = rect.creationTime {
+                let age = now - creationTime
+                if age < fadeDuration {
+                    drawRectangle(rect, alpha: alphaForAge(age))
+                    aliveRects.append(rect)
+                }
+            } else {
+                drawRectangle(rect, alpha: 1.0)
+                if fadeMode {
                     aliveRects.append(rect)
                 }
             }
-            rectangles = aliveRects
-        } else {
-            for rect in rectangles {
-                drawRectangle(rect, alpha: 1.0)
-            }
         }
-
+        if fadeMode {
+            rectangles = aliveRects
+        }
         if let rectangle = currentRectangle {
             drawRectangle(rectangle, alpha: 1.0)
         }
 
         // Draw circles
-        if fadeMode {
-            var aliveCircles: [Circle] = []
-            for circle in circles {
-                if let creationTime = circle.creationTime {
-                    let age = now - creationTime
-                    if age < fadeDuration {
-                        drawCircle(circle, alpha: alphaForAge(age))
-                        aliveCircles.append(circle)
-                    }
-                } else {
-                    drawCircle(circle, alpha: 1.0)
+        var aliveCircles: [Circle] = []
+        for circle in circles {
+            if fadeMode, let creationTime = circle.creationTime {
+                let age = now - creationTime
+                if age < fadeDuration {
+                    drawCircle(circle, alpha: alphaForAge(age))
+                    aliveCircles.append(circle)
+                }
+            } else {
+                drawCircle(circle, alpha: 1.0)
+                if fadeMode {
                     aliveCircles.append(circle)
                 }
             }
-            circles = aliveCircles
-        } else {
-            for circle in circles {
-                drawCircle(circle, alpha: 1.0)
-            }
         }
-
+        if fadeMode {
+            circles = aliveCircles
+        }
         if let circle = currentCircle {
             drawCircle(circle, alpha: 1.0)
         }
@@ -776,25 +758,23 @@ class OverlayView: NSView, NSTextFieldDelegate {
             drawText(annotation)
         }
 
-        if fadeMode {
-            var aliveCounters: [CounterAnnotation] = []
-            for counter in counterAnnotations {
-                if let creationTime = counter.creationTime {
-                    let age = now - creationTime
-                    if age < fadeDuration {
-                        drawCounter(counter, alpha: alphaForAge(age))
-                        aliveCounters.append(counter)
-                    }
-                } else {
-                    drawCounter(counter, alpha: 1.0)
+        var aliveCounters: [CounterAnnotation] = []
+        for counter in counterAnnotations {
+            if fadeMode, let creationTime = counter.creationTime {
+                let age = now - creationTime
+                if age < fadeDuration {
+                    drawCounter(counter, alpha: alphaForAge(age))
+                    aliveCounters.append(counter)
+                }
+            } else {
+                drawCounter(counter, alpha: 1.0)
+                if fadeMode {
                     aliveCounters.append(counter)
                 }
             }
+        }
+        if fadeMode {
             counterAnnotations = aliveCounters
-        } else {
-            for counter in counterAnnotations {
-                drawCounter(counter, alpha: 1.0)
-            }
         }
         
         // Draw selection bounding box for all selected objects
