@@ -40,7 +40,7 @@ struct CursorSettingsView: View {
                     CursorHighlightManager.shared.activeCursorStyle = newValue
                 }
 
-                if activeCursorStyle == .circle || activeCursorStyle == .crosshair {
+                if activeCursorStyle != .none && activeCursorStyle != .outline {
                     SettingsSliderRow(
                         title: "Cursor Size",
                         value: $activeCursorSize,
@@ -223,6 +223,36 @@ private struct ActiveCursorPreview: View {
                 path.addLine(to: CGPoint(x: center.x, y: center.y + size / 2))
 
                 context.stroke(path, with: .color(Color(color)), lineWidth: max(2.5, size / 5))
+            case .brush:
+                let unit = size * 0.7
+                let tip = CGPoint(x: center.x - unit * 0.7, y: center.y + unit * 0.7)
+                let axis = CGPoint(x: 0.7071, y: -0.7071)
+                let perp = CGPoint(x: 0.7071, y: 0.7071)
+
+                func point(_ t: CGFloat, _ w: CGFloat) -> CGPoint {
+                    CGPoint(
+                        x: tip.x + (axis.x * t + perp.x * w) * unit,
+                        y: tip.y + (axis.y * t + perp.y * w) * unit
+                    )
+                }
+
+                var bristle = Path()
+                bristle.move(to: tip)
+                bristle.addQuadCurve(to: point(0.55, 0.2), control: point(0.19, 0.22))
+                bristle.addQuadCurve(to: point(0.55, -0.2), control: point(0.66, 0))
+                bristle.addQuadCurve(to: tip, control: point(0.19, -0.22))
+                bristle.closeSubpath()
+
+                var handle = Path()
+                handle.move(to: point(0.62, 0.11))
+                handle.addLine(to: point(1.45, 0.11))
+                handle.addLine(to: point(1.45, -0.11))
+                handle.addLine(to: point(0.62, -0.11))
+                handle.closeSubpath()
+
+                context.fill(bristle, with: .color(Color(color)))
+                context.fill(handle, with: .color(.black))
+                context.stroke(handle, with: .color(.white), lineWidth: 1)
             }
         }
         .frame(width: 40, height: 40)

@@ -6,6 +6,7 @@ enum ActiveCursorStyle: String, CaseIterable {
     case outline = "outline"
     case circle = "circle"
     case crosshair = "crosshair"
+    case brush = "brush"
 
     var displayName: String {
         switch self {
@@ -13,6 +14,7 @@ enum ActiveCursorStyle: String, CaseIterable {
         case .outline: return "Outline"
         case .circle: return "Circle"
         case .crosshair: return "Crosshair"
+        case .brush: return "Brush"
         }
     }
 }

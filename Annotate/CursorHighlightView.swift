@@ -22,6 +22,10 @@ class CursorHighlightView: NSView {
     private var cachedCrosshairPath: CGPath?
     private var cachedCrosshairSize: CGFloat = 0
 
+    private var cachedBrushOuterPath: CGPath?
+    private var cachedBrushInnerPath: CGPath?
+    private var cachedBrushSize: CGFloat = 0
+
     private var cachedOutlineOuterPath: CGPath?
     private var cachedOutlineInnerPath: CGPath?
     private var cachedOutlineScale: CGFloat = 0
@@ -262,6 +266,24 @@ class CursorHighlightView: NSView {
                 cursorLayer.lineWidth = thickness
                 cursorLayer.opacity = 1
 
+            case .brush:
+                let size = manager.activeCursorSize
+                let paths = brushPaths(for: size)
+
+                outlineLayer.path = paths.outer
+                outlineLayer.position = localPoint
+                outlineLayer.fillColor = Self.blackCG
+                outlineLayer.strokeColor = Self.whiteCG
+                outlineLayer.lineWidth = 1
+                outlineLayer.opacity = 1
+
+                cursorLayer.path = paths.inner
+                cursorLayer.position = localPoint
+                cursorLayer.fillColor = manager.annotationColorCG
+                cursorLayer.strokeColor = nil
+                cursorLayer.lineWidth = 0
+                cursorLayer.opacity = 1
+
             case .none:
                 break
             }
@@ -310,6 +332,54 @@ class CursorHighlightView: NSView {
         return cachedCrosshairPath!
     }
 
+    private func brushPaths(for size: CGFloat) -> (outer: CGPath, inner: CGPath) {
+        if size != cachedBrushSize || cachedBrushOuterPath == nil {
+            cachedBrushInnerPath = Self.brushBristlePath(size: size)
+            cachedBrushOuterPath = Self.brushHandlePath(size: size)
+            cachedBrushSize = size
+        }
+        return (cachedBrushOuterPath!, cachedBrushInnerPath!)
+    }
+
+    private static func brushBristlePath(size: CGFloat) -> CGPath {
+        let axis = CGPoint(x: 0.7071, y: 0.7071)
+        let perp = CGPoint(x: -0.7071, y: 0.7071)
+        let tipLength = size * 0.55
+        let halfWidth = size * 0.2
+
+        func point(_ t: CGFloat, _ w: CGFloat) -> CGPoint {
+            CGPoint(x: axis.x * t + perp.x * w, y: axis.y * t + perp.y * w)
+        }
+
+        let path = CGMutablePath()
+        path.move(to: .zero)
+        path.addQuadCurve(to: point(tipLength, halfWidth), control: point(tipLength * 0.35, halfWidth * 1.1))
+        path.addQuadCurve(to: point(tipLength, -halfWidth), control: point(tipLength * 1.2, 0))
+        path.addQuadCurve(to: .zero, control: point(tipLength * 0.35, -halfWidth * 1.1))
+        path.closeSubpath()
+        return path
+    }
+
+    private static func brushHandlePath(size: CGFloat) -> CGPath {
+        let axis = CGPoint(x: 0.7071, y: 0.7071)
+        let perp = CGPoint(x: -0.7071, y: 0.7071)
+        let start = size * 0.62
+        let end = size * 1.45
+        let halfWidth = size * 0.11
+
+        func point(_ t: CGFloat, _ w: CGFloat) -> CGPoint {
+            CGPoint(x: axis.x * t + perp.x * w, y: axis.y * t + perp.y * w)
+        }
+
+        let path = CGMutablePath()
+        path.move(to: point(start, halfWidth))
+        path.addLine(to: point(end, halfWidth))
+        path.addLine(to: point(end, -halfWidth))
+        path.addLine(to: point(start, -halfWidth))
+        path.closeSubpath()
+        return path
+    }
+
     private func outlineCursorPaths(for scale: CGFloat) -> (outer: CGPath, inner: CGPath) {
         if scale != cachedOutlineScale || cachedOutlineOuterPath == nil {
             var transform = CGAffineTransform(scaleX: scale, y: scale)
@@ -323,6 +393,7 @@ class CursorHighlightView: NSView {
     // MARK: - Static Constants
 
     private static let blackCG: CGColor = NSColor.black.cgColor
+    private static let whiteCG: CGColor = NSColor.white.cgColor
 
     private static let cursorOuterPath: CGPath = {
         let path = CGMutablePath()
