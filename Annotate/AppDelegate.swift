@@ -111,7 +111,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
     func updateDockIconVisibility() {
         guard NSApplication.shared.delegate != nil else { return }
 
-        if userDefaults.bool(forKey: UserDefaults.hideDockIconKey) {
+        let hideDockIcon = userDefaults.object(forKey: UserDefaults.hideDockIconKey) as? Bool ?? true
+        if hideDockIcon {
             NSApplication.shared.setActivationPolicy(.accessory)
         } else {
             NSApplication.shared.setActivationPolicy(.regular)
