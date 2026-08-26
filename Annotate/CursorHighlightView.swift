@@ -317,16 +317,20 @@ class CursorHighlightView: NSView {
             case .brush:
                 let size = manager.strokeCursorSize
                 let paths = brushPaths(for: size)
+                let dotRadius = max(manager.effectiveStrokeWidth, 2) / 2
+                let nibPoint = CGPoint(
+                    x: localPoint.x + dotRadius * 0.643,
+                    y: localPoint.y + dotRadius * 0.766)
 
                 outlineLayer.path = paths.gold
-                outlineLayer.position = localPoint
+                outlineLayer.position = nibPoint
                 outlineLayer.fillColor = Self.nibGoldCG
                 outlineLayer.strokeColor = Self.nibGoldDarkCG
                 outlineLayer.lineWidth = 1
                 outlineLayer.opacity = 1
 
                 accentLayer.path = paths.barrel
-                accentLayer.position = localPoint
+                accentLayer.position = nibPoint
                 accentLayer.fillColor = Self.barrelDarkCG
                 accentLayer.strokeColor = Self.whiteCG
                 accentLayer.lineWidth = 1.2

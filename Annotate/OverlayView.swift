@@ -99,6 +99,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
             CursorHighlightManager.shared.activeTool = currentTool
             window?.invalidateCursorRects(for: self)
             updateCursor()
+            (window as? OverlayWindow)?.refreshHelpBar()
         }
     }
     var previousTool: ToolType = .pen

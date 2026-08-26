@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 class OverlayWindow: NSPanel {
     var overlayView: OverlayView!
@@ -23,6 +24,7 @@ class OverlayWindow: NSPanel {
     private var acceptedMouseMovedBeforePicker = false
     private var pickerMoveMonitor: Any?
     private var lastLiveShapeRect: NSRect?
+    private var helpBarHost: NSHostingView<HelpBarView>?
     private var feedbackRemovalTask: DispatchWorkItem?
     
     // Create undo manager for this window
@@ -86,6 +88,88 @@ class OverlayWindow: NSPanel {
         containerView.addSubview(overlayView)
 
         self.contentView = containerView
+        installHelpBar(in: containerView)
+    }
+
+    private func installHelpBar(in container: NSView) {
+        let host = NSHostingView(rootView: makeHelpBarRoot())
+        host.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
+        container.addSubview(host)
+        helpBarHost = host
+        layoutHelpBar()
+        updateHelpBarVisibility()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(shortcutsChangedForHelpBar),
+            name: .shortcutsDidChange,
+            object: nil
+        )
+    }
+
+    @objc private func shortcutsChangedForHelpBar() {
+        refreshHelpBar()
+    }
+
+    private func makeHelpBarRoot() -> HelpBarView {
+        HelpBarView(
+            activeTool: overlayView.currentTool,
+            fadeMode: overlayView.fadeMode
+        ) { [weak self] action in
+            self?.handleHelpBarAction(action)
+        }
+    }
+
+    func refreshHelpBar() {
+        helpBarHost?.rootView = makeHelpBarRoot()
+        layoutHelpBar()
+    }
+
+    func updateHelpBarVisibility() {
+        let visible =
+            UserDefaults.standard.object(forKey: UserDefaults.helpBarVisibleKey) as? Bool ?? true
+        helpBarHost?.isHidden = !visible
+    }
+
+    private func layoutHelpBar() {
+        guard let host = helpBarHost, let container = contentView else { return }
+        let size = host.fittingSize
+        host.frame = NSRect(
+            x: (container.bounds.width - size.width) / 2,
+            y: 20,
+            width: size.width,
+            height: size.height)
+    }
+
+    private func handleHelpBarAction(_ action: HelpBarAction) {
+        switch action {
+        case .tool(let tool):
+            switch tool {
+            case .pen: AppDelegate.shared?.enablePenMode(NSMenuItem())
+            case .highlighter: AppDelegate.shared?.enableHighlighterMode(NSMenuItem())
+            case .arrow: AppDelegate.shared?.enableArrowMode(NSMenuItem())
+            case .line: AppDelegate.shared?.enableLineMode(NSMenuItem())
+            case .rectangle: AppDelegate.shared?.enableRectangleMode(NSMenuItem())
+            case .circle: AppDelegate.shared?.enableCircleMode(NSMenuItem())
+            case .counter: AppDelegate.shared?.enableCounterMode(NSMenuItem())
+            case .text: AppDelegate.shared?.enableTextMode(NSMenuItem())
+            case .select: AppDelegate.shared?.enableSelectMode(NSMenuItem())
+            case .eraser: AppDelegate.shared?.enableEraserMode(NSMenuItem())
+            }
+        case .colorPicker:
+            beginQuickPicker(.color)
+        case .widthPicker:
+            beginQuickPicker(.width)
+        case .toggleFade:
+            AppDelegate.shared?.toggleFadeMode(NSMenuItem())
+        case .deleteLast:
+            overlayView.deleteLastItem()
+        case .clearAll:
+            overlayView.clearAll()
+        case .undo:
+            overlayView.undo()
+        case .hide:
+            AppDelegate.shared?.setHelpBarVisible(false)
+        }
     }
 
     private func configureWindowLevel() {
@@ -772,6 +856,13 @@ class OverlayWindow: NSPanel {
     override func keyDown(with event: NSEvent) {
         let cmdPressed = event.modifierFlags.contains(.command)
         let key = event.characters?.lowercased() ?? ""
+
+        if event.modifierFlags.contains(.option),
+            event.charactersIgnoringModifiers?.lowercased() == "h"
+        {
+            AppDelegate.shared?.toggleHelpBar()
+            return
+        }
         
         // Handle single-key shortcuts if no modifiers are pressed
         if !cmdPressed

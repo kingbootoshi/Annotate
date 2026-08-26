@@ -299,6 +299,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
             clearAllItem.keyEquivalentModifierMask = [.option]
             menu.addItem(clearAllItem)
 
+            let helpBarItem = NSMenuItem(
+                title: "Shortcut Bar",
+                action: #selector(toggleHelpBar),
+                keyEquivalent: "h"
+            )
+            helpBarItem.keyEquivalentModifierMask = [.option]
+            menu.addItem(helpBarItem)
+
             let undoItem = NSMenuItem(
                 title: "Undo",
                 action: #selector(undo),
@@ -835,6 +843,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         for (_, window) in overlayWindows where window.isVisible {
             window.showToggleFeedback(text, icon: icon)
         }
+        refreshAllHelpBars()
+    }
+
+    @objc func toggleHelpBar() {
+        let current =
+            UserDefaults.standard.object(forKey: UserDefaults.helpBarVisibleKey) as? Bool ?? true
+        setHelpBarVisible(!current)
+    }
+
+    func setHelpBarVisible(_ visible: Bool) {
+        UserDefaults.standard.set(visible, forKey: UserDefaults.helpBarVisibleKey)
+        overlayWindows.values.forEach { $0.updateHelpBarVisibility() }
+    }
+
+    func refreshAllHelpBars() {
+        overlayWindows.values.forEach { $0.refreshHelpBar() }
     }
 
     @objc func showSettings() {
