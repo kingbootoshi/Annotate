@@ -224,8 +224,13 @@ class CursorHighlightManager: @unchecked Sendable {
         }
     }
 
-    var holdRingStartSize: CGFloat { effectSize * 0.2 }
-    var holdRingEndSize: CGFloat { effectSize * 0.65 }
+    var holdRingStartSize: CGFloat {
+        toolCursorKind == .style ? max(effectiveStrokeWidth * 0.4, 4) : effectSize * 0.2
+    }
+
+    var holdRingEndSize: CGFloat {
+        toolCursorKind == .style ? max(effectiveStrokeWidth, 6) : effectSize * 0.65
+    }
 
     /// Animated ring size with ease-out curve
     var currentHoldRingSize: CGFloat {
