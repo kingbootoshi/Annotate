@@ -87,7 +87,6 @@ class OverlayWindow: NSPanel {
 
         overlayView = OverlayView(frame: containerView.bounds)
         overlayView.wantsLayer = true
-        overlayView.layer?.opacity = 0.9
         containerView.addSubview(overlayView)
 
         self.contentView = containerView

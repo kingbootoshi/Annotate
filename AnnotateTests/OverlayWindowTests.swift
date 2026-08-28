@@ -35,6 +35,7 @@ final class OverlayWindowTests: XCTestCase, Sendable {
 
         XCTAssertNotNil(window.contentView)
         XCTAssertNotNil(window.overlayView)
+        XCTAssertEqual(window.overlayView.layer?.opacity, 1)
     }
 
     func testWindowLevelConfiguration() {

@@ -5,6 +5,11 @@ import XCTest
 @MainActor
 final class ModelTests: XCTestCase {
 
+    func testToolLaydownAlphaSeparatesBrushFromHighlighter() {
+        XCTAssertEqual(ToolType.pen.laydownAlpha, 1)
+        XCTAssertEqual(ToolType.highlighter.laydownAlpha, 0.5)
+    }
+
     func testArrow() {
         let start = NSPoint(x: 0, y: 0)
         let end = NSPoint(x: 100, y: 100)
