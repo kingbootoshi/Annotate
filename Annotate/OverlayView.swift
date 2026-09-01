@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 /// Custom text field that intercepts Cmd+Enter to prevent system alert sound
 @MainActor
@@ -90,6 +91,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
     /// Annotation being created/edited; holds color and font size for finalize. Not rendered.
     var currentTextAnnotation: TextAnnotation?
     var activeTextField: NSTextField?
+    private let textOptionsModel = TextOptionsModel()
+    private var textOptionsHost: NSHostingView<TextOptionsBarView>?
     var originalTextPosition: NSPoint?
     var draggedTextAnnotationIndex: Int?
     var dragOffset: NSPoint?
@@ -1712,6 +1715,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         self.addSubview(textField)
+        showTextOptionsBar(for: textField)
         textField.becomeFirstResponder()
 
         // Select all text if editing existing annotation
@@ -1723,6 +1727,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
     private func cleanupActiveTextField() {
         let textField = activeTextField
         activeTextField = nil  // Set to nil FIRST so controlTextDidEndEditing guard fails
+        hideTextOptionsBar()
         textField?.removeFromSuperview()
         currentTextAnnotation = nil
         editingTextAnnotationIndex = nil
@@ -1755,6 +1760,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
         )
         sender.removeFromSuperview()
         activeTextField = nil
+        hideTextOptionsBar()
         window?.makeFirstResponder(nil)
 
         guard let currentText = currentTextAnnotation else {
@@ -1874,6 +1880,54 @@ class OverlayView: NSView, NSTextFieldDelegate {
         let newX = min(anchorX, availableWidth - margin - newWidth)
 
         textField.frame = NSRect(x: newX, y: textField.frame.origin.y, width: newWidth, height: box.height)
+        syncTextOptions()
+    }
+
+    private func showTextOptionsBar(for textField: NSTextField) {
+        textOptionsModel.hasBackground = currentTextAnnotation?.hasBackground
+            ?? UserDefaults.standard.textBackgroundEnabled
+        textOptionsModel.fontSize = textField.font?.pointSize ?? UserDefaults.standard.textToolFontSize
+        let host = NSHostingView(rootView: TextOptionsBarView(model: textOptionsModel) { [weak self] action in
+            guard let self, let window = self.window as? OverlayWindow,
+                  let field = self.activeTextField else { return }
+            switch action {
+            case .toggleBackground:
+                window.toggleTextBackground()
+            case .stepFontSize(let delta):
+                window.applyTextFontSize(UserDefaults.standard.textToolFontSize + CGFloat(delta))
+            case .done:
+                self.finalizeTextAnnotation(field)
+            }
+        })
+        host.frame.size = host.fittingSize
+        textOptionsHost = host
+        addSubview(host)
+        layoutTextOptionsBar(above: textField)
+    }
+
+    private func hideTextOptionsBar() {
+        textOptionsHost?.removeFromSuperview()
+        textOptionsHost = nil
+    }
+
+    /// Keeps the option strip glued above the field; below it when the field touches the top edge.
+    private func layoutTextOptionsBar(above textField: NSTextField) {
+        guard let host = textOptionsHost else { return }
+        let gap: CGFloat = 6
+        var origin = NSPoint(x: textField.frame.minX, y: textField.frame.maxY + gap)
+        if origin.y + host.frame.height > bounds.maxY {
+            origin.y = textField.frame.minY - gap - host.frame.height
+        }
+        origin.x = min(max(0, origin.x), bounds.maxX - host.frame.width)
+        host.frame.origin = origin
+    }
+
+    func syncTextOptions() {
+        guard let field = activeTextField else { return }
+        textOptionsModel.hasBackground = currentTextAnnotation?.hasBackground
+            ?? UserDefaults.standard.textBackgroundEnabled
+        textOptionsModel.fontSize = field.font?.pointSize ?? UserDefaults.standard.textToolFontSize
+        layoutTextOptionsBar(above: field)
     }
 
     func isAnythingFading() -> Bool {

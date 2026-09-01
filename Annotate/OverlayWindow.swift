@@ -346,8 +346,10 @@ class OverlayWindow: NSPanel {
         let clickCount = event.clickCount
         let shiftPressed = event.modifierFlags.contains(.shift)
 
+        // Clicking outside an open label commits it; it never starts a new one.
         if let activeTextField = overlayView.activeTextField {
             overlayView.finalizeTextAnnotation(activeTextField)
+            return
         }
         
         // Handle selection mode
@@ -1260,6 +1262,7 @@ class OverlayWindow: NSPanel {
             ?? UserDefaults.standard.textBackgroundEnabled)
         overlayView.currentTextAnnotation?.hasBackground = enabled
         UserDefaults.standard.textBackgroundEnabled = enabled
+        overlayView.syncTextOptions()
         showFeedback(enabled ? "Label Background On" : "Label Background Off")
     }
 

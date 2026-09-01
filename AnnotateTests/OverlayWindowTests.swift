@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 
 @testable import Annotate
@@ -133,6 +134,19 @@ final class OverlayWindowTests: XCTestCase, Sendable {
         window.mouseUp(with: mouseUp)
         XCTAssertTrue(NSEvent.isMouseCoalescingEnabled)
         XCTAssertEqual(window.overlayView.paths.last?.points.count, 257)
+    }
+
+    func testClickOutsideOpenLabelCommitsWithoutStartingNewOne() {
+        window.overlayView.currentTool = .text
+        window.mouseDown(with: TestEvents.createMouseEvent(type: .leftMouseDown, location: NSPoint(x: 100, y: 100))!)
+        let field = try? XCTUnwrap(window.overlayView.activeTextField)
+        field?.stringValue = "Hello"
+        XCTAssertTrue(window.overlayView.subviews.contains { $0 is NSHostingView<TextOptionsBarView> })
+
+        window.mouseDown(with: TestEvents.createMouseEvent(type: .leftMouseDown, location: NSPoint(x: 400, y: 400))!)
+        XCTAssertNil(window.overlayView.activeTextField, "Clicking outside must commit, not open a second label")
+        XCTAssertEqual(window.overlayView.textAnnotations.map(\.text), ["Hello"])
+        XCTAssertFalse(window.overlayView.subviews.contains { $0 is NSHostingView<TextOptionsBarView> })
     }
 
     func testKeyEvents() {
