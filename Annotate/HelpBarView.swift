@@ -8,12 +8,14 @@ enum HelpBarAction {
     case deleteLast
     case clearAll
     case undo
+    case toggleShapeFill
 }
 
 @MainActor
 final class HelpBarModel: ObservableObject {
     @Published var activeTool: ToolType = .pen
     @Published var fadeMode: Bool = true
+    @Published var shapeFill: Bool = false
     @Published var shortcutsVersion = 0
 }
 
@@ -54,6 +56,10 @@ struct HelpBarView: View {
                 utilityButton(
                     "circle.lefthalf.filled", key: "␣", lit: model.fadeMode
                 ) { perform(.toggleFade) }
+                utilityButton(
+                    "rectangle.inset.filled", key: ShortcutManager.shared.getShortcut(for: .toggleShapeFill),
+                    lit: model.shapeFill
+                ) { perform(.toggleShapeFill) }
             }
             segment {
                 utilityButton("arrow.backward", key: "⌫") { perform(.deleteLast) }

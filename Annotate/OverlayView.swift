@@ -133,6 +133,9 @@ class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     var fadeMode: Bool = true
+    var shapeFill: Bool = false {
+        didSet { (window as? OverlayWindow)?.refreshHelpBar() }
+    }
     let fadeDuration: CFTimeInterval = 1.25
     var isReadOnlyMode: Bool = false
 
@@ -1055,6 +1058,10 @@ class OverlayView: NSView, NSTextFieldDelegate {
         )
 
         let path = NSBezierPath(rect: rect)
+        if rectangle.isFilled {
+            adaptedColor.withAlphaComponent(alpha).setFill()
+            path.fill()
+        }
         adaptedColor.withAlphaComponent(alpha).setStroke()
         path.lineWidth = rectangle.lineWidth
         path.stroke()
@@ -1071,6 +1078,10 @@ class OverlayView: NSView, NSTextFieldDelegate {
         )
 
         let path = NSBezierPath(ovalIn: rect)
+        if circle.isFilled {
+            adaptedColor.withAlphaComponent(alpha).setFill()
+            path.fill()
+        }
         adaptedColor.withAlphaComponent(alpha).setStroke()
         path.lineWidth = circle.lineWidth
         path.stroke()

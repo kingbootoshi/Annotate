@@ -56,6 +56,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
         let persistedFadeMode =
             userDefaults.object(forKey: UserDefaults.fadeModeKey) as? Bool ?? true
         overlayWindows.values.forEach { $0.overlayView.fadeMode = persistedFadeMode }
+        let persistedShapeFill = userDefaults.bool(forKey: UserDefaults.shapeFillKey)
+        overlayWindows.values.forEach { $0.overlayView.shapeFill = persistedShapeFill }
 
         let shouldStartInAlwaysOnMode = userDefaults.bool(forKey: UserDefaults.alwaysOnModeKey)
         if shouldStartInAlwaysOnMode {
@@ -687,6 +689,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSPopoverD
 
         let persistedFadeMode = userDefaults.object(forKey: UserDefaults.fadeModeKey) as? Bool ?? true
         overlayWindow.overlayView.fadeMode = persistedFadeMode
+        overlayWindow.overlayView.shapeFill = userDefaults.bool(forKey: UserDefaults.shapeFillKey)
     }
 
     private func configureWindowForAlwaysOnMode(_ overlayWindow: OverlayWindow) {

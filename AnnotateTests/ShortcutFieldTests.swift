@@ -25,10 +25,10 @@ final class ShortcutFieldTests: XCTestCase {
         let initialShortcut = ShortcutManager.shared.getShortcut(for: .pen)
         XCTAssertEqual(initialShortcut, "p", "Pen should start with default 'p'")
 
-        ShortcutManager.shared.setShortcut("f", for: .pen)
+        ShortcutManager.shared.setShortcut("q", for: .pen)
 
         let updatedShortcut = ShortcutManager.shared.getShortcut(for: .pen)
-        XCTAssertEqual(updatedShortcut, "f", "Pen shortcut should be updated to 'f'")
+        XCTAssertEqual(updatedShortcut, "q", "Pen shortcut should be updated to 'q'")
     }
 
     func testShortcutRecordingRejectsConflicts() {
@@ -47,7 +47,7 @@ final class ShortcutFieldTests: XCTestCase {
         let appDelegateSpy = AppDelegateShortcutSpy(userDefaults: testDefaults)
         AppDelegate.shared = appDelegateSpy
 
-        ShortcutManager.shared.setShortcut("f", for: .pen)
+        ShortcutManager.shared.setShortcut("q", for: .pen)
 
         // In real implementation, ShortcutManager posts notification → AppDelegate observer → refreshMenuKeyEquivalents()
         appDelegateSpy.refreshMenuKeyEquivalents()
@@ -97,12 +97,12 @@ final class ShortcutFieldTests: XCTestCase {
         let initialPenShortcut = shortcuts[.pen]
         XCTAssertEqual(initialPenShortcut, "p")
 
-        ShortcutManager.shared.setShortcut("f", for: .pen)
+        ShortcutManager.shared.setShortcut("q", for: .pen)
 
         shortcuts = ShortcutManager.shared.allShortcuts
 
         let updatedPenShortcut = shortcuts[.pen]
-        XCTAssertEqual(updatedPenShortcut, "f", "Shortcuts binding should reflect the update")
+        XCTAssertEqual(updatedPenShortcut, "q", "Shortcuts binding should reflect the update")
     }
 
     // MARK: - Mouse Click Cancellation Tests

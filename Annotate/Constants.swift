@@ -10,6 +10,7 @@ extension UserDefaults {
     static let clearDrawingsOnStartKey = "ClearDrawingsOnStart"
     static let hideDockIconKey = "HideDockIcon"
     static let fadeModeKey = "FadeMode"
+    static let shapeFillKey = "ShapeFillEnabled"
     static let enableBoardKey = "EnableBoard"
     static let boardOpacityKey = "BoardOpacity"
     static let alwaysOnModeKey = "AlwaysOnMode"

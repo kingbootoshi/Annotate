@@ -131,6 +131,7 @@ struct Rectangle {
     var endPoint: NSPoint
     var color: NSColor
     var lineWidth: CGFloat
+    var isFilled: Bool = false
     var creationTime: CFTimeInterval?
 }
 
@@ -140,6 +141,7 @@ struct Circle {
     var endPoint: NSPoint
     var color: NSColor
     var lineWidth: CGFloat
+    var isFilled: Bool = false
     var creationTime: CFTimeInterval?
 }
 
@@ -254,14 +256,16 @@ extension Line: Equatable {
 extension Rectangle: Equatable {
     public static func == (lhs: Rectangle, rhs: Rectangle) -> Bool {
         return lhs.startPoint == rhs.startPoint && lhs.endPoint == rhs.endPoint
-            && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth && lhs.creationTime == rhs.creationTime
+            && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth && lhs.isFilled == rhs.isFilled
+            && lhs.creationTime == rhs.creationTime
     }
 }
 
 extension Circle: Equatable {
     public static func == (lhs: Circle, rhs: Circle) -> Bool {
         return lhs.startPoint == rhs.startPoint && lhs.endPoint == rhs.endPoint
-            && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth && lhs.creationTime == rhs.creationTime
+            && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth && lhs.isFilled == rhs.isFilled
+            && lhs.creationTime == rhs.creationTime
     }
 }
 

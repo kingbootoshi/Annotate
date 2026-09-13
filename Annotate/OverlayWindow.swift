@@ -101,6 +101,7 @@ class OverlayWindow: NSPanel {
     private func installHelpBar(in container: NSView) {
         helpBarModel.activeTool = overlayView.currentTool
         helpBarModel.fadeMode = overlayView.fadeMode
+        helpBarModel.shapeFill = overlayView.shapeFill
         let root = HelpBarView(model: helpBarModel) { [weak self] action in
             self?.handleHelpBarAction(action)
         }
@@ -127,6 +128,7 @@ class OverlayWindow: NSPanel {
         withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
             helpBarModel.activeTool = overlayView.currentTool
             helpBarModel.fadeMode = overlayView.fadeMode
+            helpBarModel.shapeFill = overlayView.shapeFill
         }
     }
 
@@ -179,6 +181,8 @@ class OverlayWindow: NSPanel {
             beginQuickPicker(.width)
         case .toggleFade:
             AppDelegate.shared?.toggleFadeMode(NSMenuItem())
+        case .toggleShapeFill:
+            toggleShapeFill()
         case .deleteLast:
             overlayView.deleteLastItem()
         case .clearAll:
@@ -531,10 +535,12 @@ class OverlayWindow: NSPanel {
             )
         case .rectangle:
             overlayView.currentRectangle = Rectangle(
-                startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
+                startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor,
+                lineWidth: overlayView.currentLineWidth, isFilled: overlayView.shapeFill, creationTime: nil)
         case .circle:
             overlayView.currentCircle = Circle(
-                startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
+                startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor,
+                lineWidth: overlayView.currentLineWidth, isFilled: overlayView.shapeFill, creationTime: nil)
         case .text:
             break
         case .counter:
@@ -961,6 +967,9 @@ class OverlayWindow: NSPanel {
             case ShortcutManager.shared.getShortcut(for: .toggleClickEffects):
                 AppDelegate.shared?.toggleClickEffects(nil)
                 return
+            case ShortcutManager.shared.getShortcut(for: .toggleShapeFill):
+                toggleShapeFill()
+                return
             case "[":
                 stepStrokeLevel(-1)
                 return
@@ -1255,6 +1264,15 @@ class OverlayWindow: NSPanel {
         }
 
         showFontSizeFeedback(clamped)
+    }
+
+    /// One switch for every overlay: new rectangles and circles are filled while it is on.
+    func toggleShapeFill() {
+        let enabled = !overlayView.shapeFill
+        UserDefaults.standard.set(enabled, forKey: UserDefaults.shapeFillKey)
+        overlayView.shapeFill = enabled
+        AppDelegate.shared?.overlayWindows.values.forEach { $0.overlayView.shapeFill = enabled }
+        showFeedback(enabled ? "Shapes: Filled" : "Shapes: Outline")
     }
 
     func toggleTextBackground() {

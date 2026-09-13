@@ -149,6 +149,26 @@ final class OverlayWindowTests: XCTestCase, Sendable {
         XCTAssertFalse(window.overlayView.subviews.contains { $0 is NSHostingView<TextOptionsBarView> })
     }
 
+    func testShapeFillKeyTogglesAndAppliesToNewShapes() throws {
+        UserDefaults.standard.removeObject(forKey: UserDefaults.shapeFillKey)
+        defer { UserDefaults.standard.removeObject(forKey: UserDefaults.shapeFillKey) }
+        window.overlayView.shapeFill = false
+        window.overlayView.fadeMode = false
+        window.overlayView.currentTool = .rectangle
+
+        window.keyDown(with: try XCTUnwrap(TestEvents.createKeyEvent(type: .keyDown, keyCode: 3, characters: "f")))
+        XCTAssertTrue(window.overlayView.shapeFill)
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: UserDefaults.shapeFillKey))
+
+        window.mouseDown(with: TestEvents.createMouseEvent(type: .leftMouseDown, location: NSPoint(x: 10, y: 10))!)
+        window.mouseDragged(with: TestEvents.createMouseEvent(type: .leftMouseDragged, location: NSPoint(x: 60, y: 60))!)
+        window.mouseUp(with: TestEvents.createMouseEvent(type: .leftMouseUp, location: NSPoint(x: 60, y: 60))!)
+        XCTAssertEqual(window.overlayView.rectangles.last?.isFilled, true)
+
+        window.keyDown(with: try XCTUnwrap(TestEvents.createKeyEvent(type: .keyDown, keyCode: 3, characters: "f")))
+        XCTAssertFalse(window.overlayView.shapeFill)
+    }
+
     func testKeyEvents() {
         // Test ESC key
         let escEvent = TestEvents.createKeyEvent(type: .keyDown, keyCode: 53)
