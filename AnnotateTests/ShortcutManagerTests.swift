@@ -29,7 +29,7 @@ final class ShortcutManagerTests: XCTestCase, Sendable {
     func testDuplicateShortcutNotAllowed() {
         // Given the default for Arrow is "a", attempt to set Pen to "a".
         ShortcutManager.shared.setShortcut("a", for: .pen)
-        // The set should be rejected and Pen remains its default ("q").
+        // The set should be rejected and Pen remains its default.
         XCTAssertEqual(
             ShortcutManager.shared.getShortcut(for: .pen), ShortcutKey.pen.defaultKey,
             "Pen shortcut should not update to 'a' because Arrow already uses it")
