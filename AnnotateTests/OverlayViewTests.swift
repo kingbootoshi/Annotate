@@ -1196,4 +1196,56 @@ final class OverlayViewTests: XCTestCase, Sendable {
 
         try body()
     }
+
+    // MARK: - Resize handles
+
+    func testCornerHandleScalesLabelAndKeepsOppositeCornerFixed() throws {
+        overlayView.fadeMode = false
+        overlayView.textAnnotations = [
+            TextAnnotation(text: "Scale me", position: NSPoint(x: 200, y: 200), color: .red, fontSize: 20)
+        ]
+        overlayView.selectedObjects = [.text(index: 0)]
+        let before = overlayView.getObjectBounds(.text(index: 0))
+        let box = overlayView.calculateSelectionBoundingBox()
+
+        XCTAssertTrue(overlayView.beginSelectionResize(at: NSPoint(x: box.maxX, y: box.maxY)))
+        overlayView.updateSelectionResize(
+            to: NSPoint(x: before.minX + before.width * 2, y: before.minY + before.height * 2))
+        overlayView.endSelectionResize()
+
+        let label = try XCTUnwrap(overlayView.textAnnotations.first)
+        XCTAssertEqual(label.fontSize, 40, accuracy: 1)
+        let after = overlayView.getObjectBounds(.text(index: 0))
+        XCTAssertEqual(after.minX, before.minX, accuracy: 0.5, "Anchor corner must not move")
+        XCTAssertEqual(after.minY, before.minY, accuracy: 0.5, "Anchor corner must not move")
+        XCTAssertNil(overlayView.selectionResize)
+    }
+
+    func testCornerHandleResizesRectangleFromOppositeCorner() {
+        overlayView.fadeMode = false
+        overlayView.rectangles = [
+            Rectangle(startPoint: NSPoint(x: 100, y: 100), endPoint: NSPoint(x: 200, y: 160), color: .red, lineWidth: 3)
+        ]
+        overlayView.selectedObjects = [.rectangle(index: 0)]
+        let box = overlayView.calculateSelectionBoundingBox()
+
+        XCTAssertTrue(overlayView.beginSelectionResize(at: NSPoint(x: box.minX, y: box.minY)))
+        overlayView.updateSelectionResize(to: NSPoint(x: 40, y: 50))
+        overlayView.endSelectionResize()
+
+        XCTAssertEqual(overlayView.getObjectBounds(.rectangle(index: 0)), NSRect(x: 40, y: 50, width: 160, height: 110))
+    }
+
+    func testHandlesIgnoreMultiSelectionAndPointsOffTheCorners() {
+        overlayView.rectangles = [
+            Rectangle(startPoint: NSPoint(x: 100, y: 100), endPoint: NSPoint(x: 200, y: 160), color: .red, lineWidth: 3),
+            Rectangle(startPoint: NSPoint(x: 300, y: 300), endPoint: NSPoint(x: 350, y: 350), color: .red, lineWidth: 3),
+        ]
+        overlayView.selectedObjects = [.rectangle(index: 0)]
+        XCTAssertFalse(overlayView.beginSelectionResize(at: NSPoint(x: 150, y: 130)), "Middle of the box moves, not resizes")
+
+        overlayView.selectedObjects = [.rectangle(index: 0), .rectangle(index: 1)]
+        let box = overlayView.calculateSelectionBoundingBox()
+        XCTAssertFalse(overlayView.beginSelectionResize(at: NSPoint(x: box.minX, y: box.minY)))
+    }
 }

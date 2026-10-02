@@ -863,6 +863,9 @@ class OverlayWindow: NSPanel {
         
         // Handle selection mode
         if overlayView.currentTool == .select {
+            if !shiftPressed && overlayView.beginSelectionResize(at: startPoint) {
+                return
+            }
             // First check if we clicked inside the bounding box of already selected objects
             if !overlayView.selectedObjects.isEmpty && overlayView.isPointInSelectionBoundingBox(startPoint) {
                 // Clicked inside the selection bounding box
@@ -1116,6 +1119,11 @@ class OverlayWindow: NSPanel {
             return
         }
         
+        if overlayView.selectionResize != nil {
+            overlayView.updateSelectionResize(to: currentPoint)
+            return
+        }
+
         // Handle selection dragging
         if overlayView.currentTool == .select && !overlayView.selectedObjects.isEmpty {
             // Get or set drag start point
@@ -1494,6 +1502,11 @@ class OverlayWindow: NSPanel {
             return
         }
         
+        if overlayView.selectionResize != nil {
+            overlayView.endSelectionResize()
+            return
+        }
+
         // Handle selection drag end
         if overlayView.currentTool == .select && !overlayView.selectedObjects.isEmpty {
             // Register undo for all moved objects

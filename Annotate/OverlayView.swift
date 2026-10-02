@@ -560,6 +560,16 @@ class OverlayView: NSView, NSTextFieldDelegate {
                     }
                 }
             }
+        case .resizeText(let index, let from, let to):
+            manager?.registerUndo(withTarget: self) { target in
+                MainActor.assumeIsolated {
+                    if index < target.textAnnotations.count {
+                        target.textAnnotations[index] = from
+                        target.registerUndo(action: .resizeText(index, to, from))
+                        target.needsDisplay = true
+                    }
+                }
+            }
         case .addCounter(let counter):
             manager?.registerUndo(withTarget: self) { target in
                 MainActor.assumeIsolated {
@@ -757,6 +767,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
             let box = calculateSelectionBoundingBox()
             if intersectsDirtyRect(box, dirtyRect) {
                 drawSelectionBoundingBox(box)
+                drawResizeHandles()
             }
         }
 
@@ -1017,6 +1028,126 @@ class OverlayView: NSView, NSTextFieldDelegate {
         path.setLineDash([5.0, 3.0], count: 2, phase: 0)
         NSColor.systemBlue.withAlphaComponent(0.8).setStroke()
         path.stroke()
+    }
+
+    // MARK: - Resize Handles
+
+    /// A corner drag that scales the one selected label, rectangle, or circle.
+    struct SelectionResize {
+        let object: SelectedObject
+        /// The object's corner opposite the grabbed handle. It stays put during the drag.
+        let anchor: NSPoint
+        let anchorIsMinX: Bool
+        let anchorIsMinY: Bool
+        let originalBounds: NSRect
+        let originalPosition: Any?
+        let originalText: TextAnnotation?
+    }
+
+    static let resizeHandleDiameter: CGFloat = 9
+
+    var selectionResize: SelectionResize?
+
+    /// Handles appear only when one resizable object is selected.
+    var resizableSelection: SelectedObject? {
+        guard selectedObjects.count == 1, let object = selectedObjects.first else { return nil }
+        switch object {
+        case .rectangle, .circle, .text: return object
+        default: return nil
+        }
+    }
+
+    private func resizeHandleCenters(in box: NSRect) -> [NSPoint] {
+        [
+            NSPoint(x: box.minX, y: box.minY), NSPoint(x: box.maxX, y: box.minY),
+            NSPoint(x: box.minX, y: box.maxY), NSPoint(x: box.maxX, y: box.maxY),
+        ]
+    }
+
+    private func drawResizeHandles() {
+        guard resizableSelection != nil else { return }
+        let d = Self.resizeHandleDiameter
+        for center in resizeHandleCenters(in: calculateSelectionBoundingBox()) {
+            let dot = NSBezierPath(ovalIn: NSRect(x: center.x - d / 2, y: center.y - d / 2, width: d, height: d))
+            NSColor.white.setFill()
+            dot.fill()
+            NSColor.systemBlue.setStroke()
+            dot.lineWidth = 1.5
+            dot.stroke()
+        }
+    }
+
+    /// Starts a resize when `point` is on a corner handle of the single selected object.
+    func beginSelectionResize(at point: NSPoint) -> Bool {
+        guard let object = resizableSelection else { return false }
+        let box = calculateSelectionBoundingBox()
+        // A slightly larger grab area than the drawn dot, so the corner is easy to hit.
+        let grabRadius = Self.resizeHandleDiameter
+        guard let corner = resizeHandleCenters(in: box).first(where: {
+            hypot($0.x - point.x, $0.y - point.y) <= grabRadius
+        }) else { return false }
+
+        let bounds = getObjectBounds(object)
+        let anchorIsMinX = corner.x > box.midX
+        let anchorIsMinY = corner.y > box.midY
+        var originalText: TextAnnotation?
+        if case .text(let index) = object { originalText = textAnnotations[index] }
+        selectionResize = SelectionResize(
+            object: object,
+            anchor: NSPoint(
+                x: anchorIsMinX ? bounds.minX : bounds.maxX,
+                y: anchorIsMinY ? bounds.minY : bounds.maxY),
+            anchorIsMinX: anchorIsMinX,
+            anchorIsMinY: anchorIsMinY,
+            originalBounds: bounds,
+            originalPosition: getObjectPosition(object),
+            originalText: originalText
+        )
+        return true
+    }
+
+    /// Shapes follow the pointer corner to corner. Labels scale their font so the
+    /// pointer stays on the far corner, the way Keynote and Figma scale text.
+    func updateSelectionResize(to point: NSPoint) {
+        guard let resize = selectionResize else { return }
+        switch resize.object {
+        case .rectangle(let index) where index < rectangles.count:
+            rectangles[index].startPoint = resize.anchor
+            rectangles[index].endPoint = point
+            rectangles[index].sample = nil
+        case .circle(let index) where index < circles.count:
+            circles[index].startPoint = resize.anchor
+            circles[index].endPoint = point
+        case .text(let index) where index < textAnnotations.count:
+            guard let original = resize.originalText else { return }
+            let bounds = resize.originalBounds
+            let scale = max(
+                abs(point.x - resize.anchor.x) / max(bounds.width, 1),
+                abs(point.y - resize.anchor.y) / max(bounds.height, 1))
+            var label = original
+            label.fontSize = (original.fontSize * scale).rounded().clamped(to: textAnnotationFontSizeRange)
+            // Measure the new size, then slide the label so the anchor corner does not move.
+            let rect = getTextRect(for: label)
+            label.position.x += resize.anchor.x - (resize.anchorIsMinX ? rect.minX : rect.maxX)
+            label.position.y += resize.anchor.y - (resize.anchorIsMinY ? rect.minY : rect.maxY)
+            textAnnotations[index] = label
+        default:
+            return
+        }
+        needsDisplay = true
+    }
+
+    func endSelectionResize() {
+        guard let resize = selectionResize else { return }
+        selectionResize = nil
+        if case .text(let index) = resize.object, let original = resize.originalText,
+            index < textAnnotations.count, textAnnotations[index] != original
+        {
+            registerUndo(action: .resizeText(index, original, textAnnotations[index]))
+        } else if let from = resize.originalPosition, let to = getObjectPosition(resize.object) {
+            registerMoveUndo(object: resize.object, from: from, to: to)
+        }
+        needsDisplay = true
     }
     
     /// Check if a point is inside the bounding box of any selected object
@@ -1785,6 +1916,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
             isDrawingSelectionRect = false
             selectionDragOffset = nil
             selectionOriginalData = [:]
+            selectionResize = nil
         }
         failedSampleKeys.removeAll()
 

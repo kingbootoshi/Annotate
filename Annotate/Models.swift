@@ -354,6 +354,7 @@ enum DrawingAction {
     case addText(TextAnnotation)
     case removeText(TextAnnotation)
     case moveText(Int, NSPoint, NSPoint)
+    case resizeText(Int, TextAnnotation, TextAnnotation)  // index, from, to
     case moveArrow(Int, NSPoint, NSPoint, NSPoint, NSPoint)  // index, fromStart, fromEnd, toStart, toEnd
     case moveLine(Int, NSPoint, NSPoint, NSPoint, NSPoint)
     case moveRectangle(Int, NSPoint, NSPoint, NSPoint, NSPoint)
