@@ -501,7 +501,8 @@ class OverlayWindow: NSPanel {
                 position: startPoint,
                 color: currentColor,
                 fontSize: UserDefaults.standard.textToolFontSize,
-                hasBackground: UserDefaults.standard.textBackgroundEnabled
+                hasBackground: UserDefaults.standard.textBackgroundEnabled,
+                backgroundIsDark: UserDefaults.standard.textBackgroundDark
             )
             overlayView.createTextField(at: startPoint)
         }
@@ -1282,6 +1283,15 @@ class OverlayWindow: NSPanel {
         UserDefaults.standard.textBackgroundEnabled = enabled
         overlayView.syncTextOptions()
         showFeedback(enabled ? "Label Background On" : "Label Background Off")
+    }
+
+    func flipTextBackgroundTone() {
+        let dark = !(overlayView.currentTextAnnotation?.backgroundIsDark
+            ?? UserDefaults.standard.textBackgroundDark)
+        overlayView.currentTextAnnotation?.backgroundIsDark = dark
+        UserDefaults.standard.textBackgroundDark = dark
+        overlayView.syncTextOptions()
+        showFeedback(dark ? "Label Background: Black" : "Label Background: White")
     }
 
     func applyLineWidth(_ width: CGFloat) {

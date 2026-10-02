@@ -2,6 +2,7 @@ import SwiftUI
 
 enum TextOptionsAction {
     case toggleBackground
+    case flipBackgroundTone
     case stepFontSize(Int)
     case done
 }
@@ -9,6 +10,7 @@ enum TextOptionsAction {
 @MainActor
 final class TextOptionsModel: ObservableObject {
     @Published var hasBackground: Bool = false
+    @Published var backgroundIsDark: Bool = true
     @Published var fontSize: CGFloat = 18
 }
 
@@ -22,6 +24,9 @@ struct TextOptionsBarView: View {
         HStack(spacing: 2) {
             chip("rectangle.fill.on.rectangle.fill", key: "⌘B", lit: model.hasBackground) {
                 perform(.toggleBackground)
+            }
+            chip(model.backgroundIsDark ? "circle.fill" : "circle", key: "⌘⇧B") {
+                perform(.flipBackgroundTone)
             }
             chip("textformat.size.smaller", key: "⌘-") { perform(.stepFontSize(-1)) }
             Text("\(Int(model.fontSize))")

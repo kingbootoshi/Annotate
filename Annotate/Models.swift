@@ -152,6 +152,7 @@ struct TextAnnotation {
     var color: NSColor
     var fontSize: CGFloat
     var hasBackground: Bool = false
+    var backgroundIsDark: Bool = true
 }
 
 struct CounterAnnotation {
@@ -273,6 +274,7 @@ extension TextAnnotation: Equatable {
     public static func == (lhs: TextAnnotation, rhs: TextAnnotation) -> Bool {
         return lhs.text == rhs.text && lhs.position == rhs.position && lhs.color.isEqual(rhs.color)
             && lhs.fontSize == rhs.fontSize && lhs.hasBackground == rhs.hasBackground
+            && lhs.backgroundIsDark == rhs.backgroundIsDark
     }
 }
 

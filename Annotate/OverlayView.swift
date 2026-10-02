@@ -7,6 +7,7 @@ class AnnotationTextField: NSTextField {
     var onCommandReturn: (() -> Void)?
     var onFontSizeStep: ((CGFloat) -> Void)?
     var onToggleBackground: (() -> Void)?
+    var onFlipBackgroundTone: (() -> Void)?
 
     /// The unclamped left-edge x the field targets before any right-edge shifting. Set when
     /// the field is created so that shrinking text after a left-shift can move it back toward
@@ -27,7 +28,7 @@ class AnnotationTextField: NSTextField {
                 onFontSizeStep?(-4)
                 return true
             case "b":
-                onToggleBackground?()
+                if event.modifierFlags.contains(.shift) { onFlipBackgroundTone?() } else { onToggleBackground?() }
                 return true
             default:
                 break
@@ -1122,15 +1123,15 @@ class OverlayView: NSView, NSTextFieldDelegate {
     }
 
     /// One pill color for both the live edit box and the committed label (ADR-0001: one owner).
-    static func labelPillColor(for textColor: NSColor) -> NSColor {
-        textColor.contrastingColor().withAlphaComponent(0.85)
+    static func labelPillColor(dark: Bool) -> NSColor {
+        (dark ? NSColor.black : NSColor.white).withAlphaComponent(0.85)
     }
 
     /// Mirrors the committed look while typing: pill when background is on, clear when off.
     func applyTextFieldBackground(_ textField: NSTextField) {
         let hasBackground = currentTextAnnotation?.hasBackground ?? UserDefaults.standard.textBackgroundEnabled
-        let textColor = textField.textColor ?? currentColor
-        textField.backgroundColor = hasBackground ? Self.labelPillColor(for: textColor) : .clear
+        let dark = currentTextAnnotation?.backgroundIsDark ?? UserDefaults.standard.textBackgroundDark
+        textField.backgroundColor = hasBackground ? Self.labelPillColor(dark: dark) : .clear
         textField.drawsBackground = hasBackground
         textField.needsDisplay = true
     }
@@ -1153,7 +1154,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
                 height: textSize.height + 8
             )
             let pill = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
-            Self.labelPillColor(for: adaptedColor).setFill()
+            Self.labelPillColor(dark: annotation.backgroundIsDark).setFill()
             pill.fill()
         }
 
@@ -1697,6 +1698,9 @@ class OverlayView: NSView, NSTextFieldDelegate {
         textField.onToggleBackground = { [weak self] in
             (self?.window as? OverlayWindow)?.toggleTextBackground()
         }
+        textField.onFlipBackgroundTone = { [weak self] in
+            (self?.window as? OverlayWindow)?.flipTextBackgroundTone()
+        }
         activeTextField = textField
         // Remember where the field started so resize can slide it back right as text shrinks.
         textField.anchorX = textField.frame.origin.x
@@ -1774,10 +1778,15 @@ class OverlayView: NSView, NSTextFieldDelegate {
 
     @objc func finalizeTextAnnotation(_ sender: NSTextField) {
         let typedText = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Trimmed trailing lines shrink the block; lift it by that height so the first line stays put.
+        let font = sender.font ?? NSFont.systemFont(ofSize: UserDefaults.standard.textToolFontSize)
+        let shown = sender.stringValue.hasSuffix("\n") ? sender.stringValue + " " : sender.stringValue
+        let trimmedHeight = shown.size(withAttributes: [.font: font]).height
+            - typedText.size(withAttributes: [.font: font]).height
         // Account for PaddedTextFieldCell padding when storing position
         let position = NSPoint(
             x: sender.frame.origin.x + 8,   // left padding
-            y: sender.frame.origin.y + 4    // top padding
+            y: sender.frame.origin.y + 4 + max(0, trimmedHeight)    // bottom padding
         )
         sender.removeFromSuperview()
         activeTextField = nil
@@ -1796,7 +1805,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
                 position: position,
                 color: currentText.color,
                 fontSize: currentText.fontSize,
-                hasBackground: currentText.hasBackground
+                hasBackground: currentText.hasBackground,
+                backgroundIsDark: currentText.backgroundIsDark
             )
 
             if let editingIndex = editingTextAnnotationIndex {
@@ -1833,12 +1843,10 @@ class OverlayView: NSView, NSTextFieldDelegate {
         } else if commandSelector == #selector(insertNewline(_:)) {
             guard let textField = control as? NSTextField else { return false }
 
-            // Cmd+Enter is handled by AnnotationTextField.performKeyEquivalent
+            // Shift+Enter adds a line inside the same label; Cmd+Enter is handled by AnnotationTextField.
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
-                let position = textField.frame.origin
-                let newY = position.y - 32
-                finalizeTextAnnotation(textField)
-                createTextFieldForNewAnnotation(at: NSPoint(x: position.x, y: newY))
+                textView.insertNewlineIgnoringFieldEditor(nil)
+                resizeActiveTextField(textField)
                 return true
             } else {
                 finalizeTextAnnotation(textField)
@@ -1848,17 +1856,6 @@ class OverlayView: NSView, NSTextFieldDelegate {
         }
 
         return false
-    }
-
-    private func createTextFieldForNewAnnotation(at point: NSPoint) {
-        currentTextAnnotation = TextAnnotation(
-            text: "",
-            position: point,
-            color: adaptColorForBoard(currentColor, boardType: currentBoardType),
-            fontSize: UserDefaults.standard.textToolFontSize,
-            hasBackground: UserDefaults.standard.textBackgroundEnabled
-        )
-        createTextField(at: point)
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
@@ -1881,7 +1878,9 @@ class OverlayView: NSView, NSTextFieldDelegate {
     /// padding (horizontal cursor slack and a 32pt height floor). Callers apply any
     /// screen-edge clamping themselves. Single source of truth for text-field sizing.
     private func textFieldBoxSize(forText text: String, font: NSFont) -> NSSize {
-        let size = text.size(withAttributes: [.font: font])
+        // A trailing line break has no glyphs, so measure it with a space to keep the caret line.
+        let measured = text.hasSuffix("\n") ? text + " " : text
+        let size = measured.size(withAttributes: [.font: font])
         return NSSize(width: max(Self.textFieldMinWidth, size.width + 32), height: max(32, size.height + 8))
     }
 
@@ -1900,13 +1899,17 @@ class OverlayView: NSView, NSTextFieldDelegate {
         let anchorX = (textField as? AnnotationTextField)?.anchorX ?? textField.frame.origin.x
         let newX = min(anchorX, availableWidth - margin - newWidth)
 
-        textField.frame = NSRect(x: newX, y: textField.frame.origin.y, width: newWidth, height: box.height)
+        // Keep the top edge fixed so new lines extend downward (the view is not flipped).
+        let top = textField.frame.maxY
+        textField.frame = NSRect(x: newX, y: top - box.height, width: newWidth, height: box.height)
         syncTextOptions()
     }
 
     private func showTextOptionsBar(for textField: NSTextField) {
         textOptionsModel.hasBackground = currentTextAnnotation?.hasBackground
             ?? UserDefaults.standard.textBackgroundEnabled
+        textOptionsModel.backgroundIsDark = currentTextAnnotation?.backgroundIsDark
+            ?? UserDefaults.standard.textBackgroundDark
         textOptionsModel.fontSize = textField.font?.pointSize ?? UserDefaults.standard.textToolFontSize
         let host = NSHostingView(rootView: TextOptionsBarView(model: textOptionsModel) { [weak self] action in
             guard let self, let window = self.window as? OverlayWindow,
@@ -1914,6 +1917,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
             switch action {
             case .toggleBackground:
                 window.toggleTextBackground()
+            case .flipBackgroundTone:
+                window.flipTextBackgroundTone()
             case .stepFontSize(let delta):
                 window.applyTextFontSize(UserDefaults.standard.textToolFontSize + CGFloat(delta))
             case .done:
@@ -1948,6 +1953,8 @@ class OverlayView: NSView, NSTextFieldDelegate {
         applyTextFieldBackground(field)
         textOptionsModel.hasBackground = currentTextAnnotation?.hasBackground
             ?? UserDefaults.standard.textBackgroundEnabled
+        textOptionsModel.backgroundIsDark = currentTextAnnotation?.backgroundIsDark
+            ?? UserDefaults.standard.textBackgroundDark
         textOptionsModel.fontSize = field.font?.pointSize ?? UserDefaults.standard.textToolFontSize
         layoutTextOptionsBar(above: field)
     }

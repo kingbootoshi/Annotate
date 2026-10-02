@@ -58,8 +58,14 @@ extension UserDefaults {
     }
 
     var textBackgroundEnabled: Bool {
-        get { bool(forKey: Self.textBackgroundKey) }
+        get { object(forKey: Self.textBackgroundKey) as? Bool ?? true }
         set { set(newValue, forKey: Self.textBackgroundKey) }
+    }
+
+    /// Black pill unless the user flips it; absent key means dark.
+    var textBackgroundDark: Bool {
+        get { object(forKey: "TextBackgroundDark") as? Bool ?? true }
+        set { set(newValue, forKey: "TextBackgroundDark") }
     }
 
     var counterToolFontSize: CGFloat {
