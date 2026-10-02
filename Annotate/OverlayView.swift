@@ -1789,9 +1789,10 @@ class OverlayView: NSView, NSTextFieldDelegate {
     func applyTextFieldBackground(_ textField: NSTextField) {
         let hasBackground = currentTextAnnotation?.hasBackground ?? pickerUserDefaults.textBackgroundEnabled
         let dark = currentTextAnnotation?.backgroundIsDark ?? pickerUserDefaults.textBackgroundDark
-        textField.backgroundColor = hasBackground ? Self.labelPillColor(dark: dark) : .clear
-        textField.drawsBackground = hasBackground
-        textField.needsDisplay = true
+        // The layer paints the pill: the cell's own background does not show while the
+        // field editor is active, so typing happened on a clear box.
+        textField.drawsBackground = false
+        textField.layer?.backgroundColor = hasBackground ? Self.labelPillColor(dark: dark).cgColor : nil
     }
 
     /// Draws a label. `bounds` is the rect the caller already measured with `getTextRect`,

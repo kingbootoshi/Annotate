@@ -183,7 +183,7 @@ final class AnnotationTextEditorContrastTests: XCTestCase, Sendable {
         overlayView.pickerUserDefaults.textBackgroundEnabled = true
 
         XCTAssertTrue(field.textColor?.isClose(to: originalText ?? .clear) ?? false)
-        XCTAssertTrue(field.backgroundColor?.isClose(to: originalBackground ?? .clear) ?? false)
+        XCTAssertNil(field.layer?.backgroundColor, "Editing a plain label must not gain a pill mid-edit")
         assertFieldContrast(field, displayedColor: .black, hasBackground: false)
 
         field.stringValue = "Label"
@@ -298,21 +298,23 @@ final class AnnotationTextEditorContrastTests: XCTestCase, Sendable {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        XCTAssertEqual(field.drawsBackground, hasBackground, "drawsBackground \(message)", file: file, line: line)
+        XCTAssertFalse(field.drawsBackground, "the layer paints the pill, not the cell \(message)", file: file, line: line)
         XCTAssertTrue(
             field.textColor?.isClose(to: displayedColor) ?? false,
             "textColor \(displayedColor) \(message)",
             file: file,
             line: line
         )
+        let layerFill = field.layer?.backgroundColor.flatMap(NSColor.init(cgColor:))
         if hasBackground {
-            let pill = OverlayView.labelPillColor(dark: true)
             XCTAssertTrue(
-                field.backgroundColor?.isClose(to: pill) ?? false,
-                "background should be the committed label pill \(message)",
+                layerFill?.isClose(to: OverlayView.labelPillColor(dark: true)) ?? false,
+                "live box should show the committed label pill \(message)",
                 file: file,
                 line: line
             )
+        } else {
+            XCTAssertNil(layerFill, "no pill while background is off \(message)", file: file, line: line)
         }
         let expectedAppearance: NSAppearance.Name =
             AnnotationTextEditorContrast.usesLightEditor(for: displayedColor) ? .aqua : .darkAqua
