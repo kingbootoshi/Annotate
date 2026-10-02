@@ -1,6 +1,67 @@
 import SwiftUI
 
+struct ShortcutSettingActionResult {
+    let shortcuts: [ShortcutKey: String]
+    let restoreConflict: Bool
+}
+
+enum ShortcutSettingAction {
+    case clear
+    case restoreDefault
+
+    @MainActor
+    func perform(
+        tool: ShortcutKey,
+        manager: ShortcutManager? = nil
+    ) -> ShortcutSettingActionResult {
+        let manager = manager ?? .shared
+        let restoreConflict: Bool
+        switch self {
+        case .clear:
+            manager.clearShortcut(tool: tool)
+            restoreConflict = false
+        case .restoreDefault:
+            restoreConflict = !manager.resetToDefault(tool: tool)
+        }
+
+        return ShortcutSettingActionResult(
+            shortcuts: manager.allShortcuts,
+            restoreConflict: restoreConflict
+        )
+    }
+}
+
+struct BuiltInShortcut: Identifiable {
+    let keys: String
+    let label: String
+    let description: String
+    var id: String { keys }
+}
+
 struct ShortcutsSettingsView: View {
+    static let builtInShortcuts: [BuiltInShortcut] = [
+        BuiltInShortcut(
+            keys: "Delete",
+            label: "Delete",
+            description: "Remove the selection, or the newest item drawn with the current tool"
+        ),
+        BuiltInShortcut(
+            keys: "⌘Z",
+            label: "Undo",
+            description: "Undo the last action"
+        ),
+        BuiltInShortcut(
+            keys: "⇧⌘Z",
+            label: "Redo",
+            description: "Redo the last undone action"
+        ),
+        BuiltInShortcut(
+            keys: "Esc",
+            label: "Close Overlay",
+            description: "Hide the overlay, or dismiss an open picker or label first"
+        )
+    ]
+
     @State private var shortcuts: [ShortcutKey: String] = ShortcutManager.shared.allShortcuts
     @State private var editingShortcut: ShortcutKey?
     @State private var showResetConfirmation = false
@@ -61,6 +122,13 @@ struct ShortcutsSettingsView: View {
                     tool: .circle,
                     label: "Circle",
                     description: "Draw circular shapes",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .redact,
+                    label: "Redact",
+                    description: "Hide on-screen content behind a rectangle",
                     shortcuts: $shortcuts,
                     editingShortcut: $editingShortcut
                 )
@@ -141,6 +209,48 @@ struct ShortcutsSettingsView: View {
                     editingShortcut: $editingShortcut
                 )
                 ShortcutSettingRow(
+                    tool: .toggleBackgroundDimming,
+                    label: "Toggle Background Dimming",
+                    description: "Toggle dimming while annotating; enables the spotlight if needed",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .toggleFade,
+                    label: ShortcutKey.toggleFade.displayName,
+                    description: "Switch between fade and persist",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .toggleToolbar,
+                    label: ShortcutKey.toggleToolbar.displayName,
+                    description: "Show or hide the floating toolbar",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .decreaseSize,
+                    label: ShortcutKey.decreaseSize.displayName,
+                    description: "Step stroke width, text size, or counter size down",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .increaseSize,
+                    label: ShortcutKey.increaseSize.displayName,
+                    description: "Step stroke width, text size, or counter size up",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
+                    tool: .clearAll,
+                    label: ShortcutKey.clearAll.displayName,
+                    description: "Remove every annotation",
+                    shortcuts: $shortcuts,
+                    editingShortcut: $editingShortcut
+                )
+                ShortcutSettingRow(
                     tool: .toggleShapeFill,
                     label: "Toggle Shape Fill",
                     description: "Draw rectangles and circles filled or as outlines",
@@ -152,7 +262,20 @@ struct ShortcutsSettingsView: View {
                     icon: "slider.horizontal.3",
                     color: .orange,
                     title: "Utilities",
-                    subtitle: "Color, width, and board controls"
+                    subtitle: "Pickers, sizes, and overlay controls"
+                )
+            }
+
+            Section {
+                ForEach(Self.builtInShortcuts) { shortcut in
+                    BuiltInShortcutRow(shortcut: shortcut)
+                }
+            } header: {
+                SettingsHeader(
+                    icon: "lock",
+                    color: .gray,
+                    title: "Built-in Shortcuts",
+                    subtitle: "Fixed editing and dismissal keys"
                 )
             }
 
@@ -181,7 +304,7 @@ struct ShortcutsSettingsView: View {
                 editingShortcut = nil
             }
         } message: {
-            Text("This will reset all keyboard shortcuts to their default values. This action cannot be undone.")
+            Text("This will reset tool and utility shortcuts to their defaults. Defaults used by Activation or Always-On stay Not Set. This action cannot be undone.")
         }
     }
 }
@@ -194,7 +317,11 @@ struct ShortcutSettingRow: View {
     @Binding var editingShortcut: ShortcutKey?
 
     @State private var isHoveringKey = false
-    @State private var isHoveringReset = false
+    @State private var isHoveringClear = false
+    @State private var isHoveringRestore = false
+    @State private var showRestoreConflict = false
+
+    private var shortcut: String { shortcuts[tool] ?? tool.defaultBinding.displayValue }
 
     var body: some View {
         LabeledContent {
@@ -208,42 +335,97 @@ struct ShortcutSettingRow: View {
                     .frame(minWidth: 60)
                 } else {
                     Button(action: { editingShortcut = tool }) {
-                        Text(shortcuts[tool] ?? tool.defaultKey)
+                        Text(shortcut.isEmpty ? "Not Set" : shortcut)
                             .font(.body.weight(.medium).monospaced())
                             .foregroundStyle(.primary)
                             .frame(minWidth: 32)
                             .padding(.vertical, 4)
                             .padding(.horizontal, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(.quaternary)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .strokeBorder(.separator, lineWidth: 1)
-                                    )
-                            )
+                            .background(ShortcutKeycapBackground())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Record \(label) shortcut")
+                    .accessibilityValue(shortcut.isEmpty ? "Not Set" : shortcut)
+                    .accessibilityIdentifier("shortcut.\(tool.rawValue).record")
                     .opacity(isHoveringKey ? 0.8 : 1.0)
                     .onHover { isHoveringKey = $0 }
+                }
 
-                    Button {
-                        ShortcutManager.shared.resetToDefault(tool: tool)
-                        shortcuts = ShortcutManager.shared.allShortcuts
-                        editingShortcut = nil
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.body)
-                            .foregroundStyle(isHoveringReset ? .secondary : .tertiary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Reset to default")
-                    .onHover { isHoveringReset = $0 }
+                Button {
+                    let result = ShortcutSettingAction.clear.perform(tool: tool)
+                    shortcuts = result.shortcuts
+                    editingShortcut = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(isHoveringClear ? .secondary : .tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear shortcut")
+                .accessibilityLabel("Clear \(label) shortcut")
+                .accessibilityIdentifier("shortcut.\(tool.rawValue).clear")
+                .disabled(shortcut.isEmpty)
+                .onHover { isHoveringClear = $0 }
+
+                Button {
+                    let result = ShortcutSettingAction.restoreDefault.perform(tool: tool)
+                    shortcuts = result.shortcuts
+                    editingShortcut = nil
+                    showRestoreConflict = result.restoreConflict
+                } label: {
+                    Image(systemName: "arrow.counterclockwise.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(isHoveringRestore ? .secondary : .tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Restore default")
+                .accessibilityLabel("Restore \(label) default")
+                .accessibilityIdentifier("shortcut.\(tool.rawValue).restore")
+                .disabled(shortcut == tool.defaultBinding.displayValue)
+                .onHover { isHoveringRestore = $0 }
+                .alert("Default Shortcut Unavailable", isPresented: $showRestoreConflict) {
+                    Button("OK") {}
+                } message: {
+                    Text(
+                        "The default shortcut “\(tool.defaultBinding.displayValue)” is already assigned. Clear it from the other action first."
+                    )
                 }
             }
         } label: {
             Text(label)
             Text(description)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// The rounded, quaternary-filled keycap shape shared by shortcut key labels.
+private struct ShortcutKeycapBackground: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6)
+            .fill(.quaternary)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(.separator, lineWidth: 1)
+            )
+    }
+}
+
+struct BuiltInShortcutRow: View {
+    let shortcut: BuiltInShortcut
+
+    var body: some View {
+        LabeledContent {
+            Text(shortcut.keys)
+                .font(.body.weight(.medium).monospaced())
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 32)
+                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .background(ShortcutKeycapBackground())
+        } label: {
+            Text(shortcut.label)
+            Text(shortcut.description)
         }
     }
 }

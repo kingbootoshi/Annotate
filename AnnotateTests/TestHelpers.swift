@@ -13,10 +13,18 @@ enum TestConstants {
 
 // MARK: - Test UserDefaults
 enum TestUserDefaults {
+    /// One suite per test process. Xcode's parallel testing isolates classes by process, so
+    /// parallel runs cannot clobber each other, and inside one process tests run serially
+    /// and `create()` clears the suite before handing it out. A per-call UUID would isolate
+    /// just as well, but the preferences daemon keeps an empty plist for every suite name
+    /// it has ever seen, which added over a hundred files to the app container per run.
+    private static let suiteName =
+        "\(TestConstants.testSuiteName).\(ProcessInfo.processInfo.processIdentifier)"
+
     /// Creates a fresh isolated UserDefaults instance for testing
-    /// - Returns: A new UserDefaults suite completely isolated from production data
+    /// - Returns: An empty UserDefaults suite completely isolated from production data
     static func create() -> UserDefaults {
-        let suite = UserDefaults(suiteName: TestConstants.testSuiteName)!
+        let suite = UserDefaults(suiteName: suiteName)!
         clear(suite)
         return suite
     }
@@ -29,9 +37,10 @@ enum TestUserDefaults {
         userDefaults.synchronize()
     }
 
-    /// Completely removes the test suite from the system
+    /// Completely removes this process's test suite so no test value is left behind in the
+    /// app container.
     static func removeSuite() {
-        UserDefaults.standard.removePersistentDomain(forName: TestConstants.testSuiteName)
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
         UserDefaults.standard.synchronize()
     }
 }
@@ -95,14 +104,15 @@ enum TestEvents {
     static func createMouseEvent(
         type: NSEvent.EventType,
         location: NSPoint,
-        modifierFlags: NSEvent.ModifierFlags = []
+        modifierFlags: NSEvent.ModifierFlags = [],
+        windowNumber: Int = 0
     ) -> NSEvent? {
         return NSEvent.mouseEvent(
             with: type,
             location: location,
             modifierFlags: modifierFlags,
             timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: 0,
+            windowNumber: windowNumber,
             context: nil,
             eventNumber: 0,
             clickCount: 1,
@@ -114,18 +124,21 @@ enum TestEvents {
         type: NSEvent.EventType,
         keyCode: UInt16,
         modifierFlags: NSEvent.ModifierFlags = [],
-        characters: String = ""
+        characters: String = "",
+        charactersIgnoringModifiers: String? = nil,
+        windowNumber: Int = 0,
+        isARepeat: Bool = false
     ) -> NSEvent? {
         return NSEvent.keyEvent(
             with: type,
             location: .zero,
             modifierFlags: modifierFlags,
             timestamp: ProcessInfo.processInfo.systemUptime,
-            windowNumber: 0,
+            windowNumber: windowNumber,
             context: nil,
             characters: characters,
-            charactersIgnoringModifiers: characters,
-            isARepeat: false,
+            charactersIgnoringModifiers: charactersIgnoringModifiers ?? characters,
+            isARepeat: isARepeat,
             keyCode: keyCode
         )
     }
@@ -166,9 +179,10 @@ class MockOverlayView: OverlayView {
         super.draw(dirtyRect)
     }
 
-    override func clearAll() {
+    @discardableResult
+    override func clearAll() -> Bool {
         clearAllCalled = true
-        super.clearAll()
+        return super.clearAll()
     }
 
     override func undo() {
@@ -185,11 +199,12 @@ class MockOverlayView: OverlayView {
 // MARK: - XCTestCase Extensions
 extension XCTestCase {
     func wait(for duration: TimeInterval) {
-        let expectation = expectation(description: "Wait for \(duration) seconds")
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
-            expectation.fulfill()
-        }
-        wait(for: [expectation], timeout: duration + 1)
+        // Nested default-mode run loop so GCD asyncAfter (hold/dismiss) can run.
+        // Do not wait on XCTestExpectation: that stalls @MainActor tests on CI.
+        // Do not run in .common — that is a mode set, not a runnable mode, so
+        // the wait elapsed wall-clock without ever draining the main queue.
+        guard duration > 0 else { return }
+        _ = CFRunLoopRunInMode(.defaultMode, duration, false)
     }
 
     nonisolated func assertEventually(

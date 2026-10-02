@@ -20,16 +20,32 @@ class OverlayWindow: NSPanel {
     
     // Track the current feedback view to remove it when a new one appears
     private var currentFeedbackView: NSView?
-    private var quickPicker: QuickPickerView?
-    private var acceptedMouseMovedBeforePicker = false
-    private var pickerMoveMonitor: Any?
-    private var lastLiveShapeRect: NSRect?
-    private var helpBarHost: NSHostingView<HelpBarView>?
-    private let helpBarModel = HelpBarModel()
-    private var isHelpBarGestureActive = false
     private var feedbackRemovalTask: DispatchWorkItem?
-    private var restoresMouseCoalescing = false
+    private enum QuickPickerInteraction {
+        case waitingForRelease(key: String, openedAt: CFTimeInterval, moved: Bool, holdActive: Bool)
+        case open(key: String)
+    }
+
+    private static let quickPickerHoldDuration: CFTimeInterval = 0.25
+    private var quickPicker: QuickPickerView?
+    private var quickPickerInteraction: QuickPickerInteraction?
+    private var quickPickerActivationKeyCode: UInt16?
+    private var quickPickerHoldTask: DispatchWorkItem?
+    private var quickPickerMoveMonitor: Any?
+    private var quickPickerInitialMouseLocation: NSPoint?
+    private var acceptedMouseMovedBeforePicker = false
+    private var pickerCommitInFlight = false
+    /// True when the picker consumed this mouse-down, so the matching up must not commit geometry.
+    private var pickerConsumedMouseDown = false
+    private var lastLiveShapeRect: NSRect?
+    private var mouseCoalescingSnapshot: Bool?
+    // Latched at mouseDown: currentTool can change mid-drag via tool shortcuts
+    private var activeFreehandTool: ToolType?
+    private var activeShapeTool: ToolType?
     
+    private(set) var toolbarPanel: ToolbarPanel?
+    let toolbarModel = ToolbarModel()
+
     // Create undo manager for this window
     private let _undoManager = UndoManager()
     
@@ -70,6 +86,9 @@ class OverlayWindow: NSPanel {
         self.hasShadow = false
         self.ignoresMouseEvents = false
         self.isRestorable = false
+        // Stated explicitly rather than left to the panel default, because closing an overlay is
+        // now a normal part of a display being unplugged and the reference must survive it.
+        self.isReleasedWhenClosed = false
         self.collectionBehavior = [.canJoinAllSpaces, .transient]
         self.setFrame(windowRect, display: true)
 
@@ -86,110 +105,231 @@ class OverlayWindow: NSPanel {
         containerView.addSubview(boardView)
 
         overlayView = OverlayView(frame: containerView.bounds)
-        overlayView.wantsLayer = true
+        // Layer-backed views ignore setNeedsDisplay(_ dirtyRect:). Keep this view un-layered
+        // so native-rate freehand can invalidate a padded segment instead of the full overlay.
+        overlayView.wantsLayer = false
         containerView.addSubview(overlayView)
 
         self.contentView = containerView
-        installHelpBar(in: containerView)
+        installToolbar()
     }
 
-    override func orderOut(_ sender: Any?) {
-        restoreMouseCoalescing()
-        super.orderOut(sender)
-    }
-
-    private func installHelpBar(in container: NSView) {
-        helpBarModel.activeTool = overlayView.currentTool
-        helpBarModel.fadeMode = overlayView.fadeMode
-        helpBarModel.shapeFill = overlayView.shapeFill
-        let root = HelpBarView(model: helpBarModel) { [weak self] action in
-            self?.handleHelpBarAction(action)
+    private func installToolbar() {
+        let panel = ToolbarPanel(overlay: self, model: toolbarModel) { [weak self] action in
+            self?.performToolbarAction(action)
         }
-        let host = NSHostingView(rootView: root)
-        host.autoresizingMask = [.minXMargin, .maxXMargin, .maxYMargin]
-        container.addSubview(host)
-        helpBarHost = host
-        layoutHelpBar()
-        updateHelpBarVisibility()
+        toolbarPanel = panel
+        // Seed the model before the bar is placed: the chips carry the user's shortcut keycaps,
+        // and a later width change would otherwise slide the restored position sideways.
+        // `refreshToolbarShortcuts` measures the bar, and attaching it restores the saved
+        // position, so the size is known by the time the placement runs.
+        refreshToolbar()
+        refreshToolbarShortcuts()
+        updateToolbarVisibility()
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(shortcutsChangedForHelpBar),
+            selector: #selector(toolbarShortcutsDidChange),
             name: .shortcutsDidChange,
             object: nil
         )
     }
 
-    @objc private func shortcutsChangedForHelpBar() {
-        helpBarModel.shortcutsVersion += 1
-        layoutHelpBar()
+    @objc private func toolbarShortcutsDidChange() {
+        refreshToolbarShortcuts()
     }
 
-    func refreshHelpBar() {
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.72)) {
-            helpBarModel.activeTool = overlayView.currentTool
-            helpBarModel.fadeMode = overlayView.fadeMode
-            helpBarModel.shapeFill = overlayView.shapeFill
+    func refreshToolbarShortcuts() {
+        toolbarModel.shortcuts = ShortcutManager.shared.allShortcuts
+        // A longer keycap widens the chips, so the bar has to be re-measured or it clips.
+        toolbarPanel?.fitToContent()
+    }
+
+    func refreshToolbar() {
+        guard overlayView != nil else { return }
+        if toolbarModel.activeTool != overlayView.currentTool {
+            toolbarModel.activeTool = overlayView.currentTool
+        }
+        if toolbarModel.currentColor != overlayView.currentColor {
+            toolbarModel.currentColor = overlayView.currentColor
+        }
+        if toolbarModel.currentWidth != overlayView.currentLineWidth {
+            toolbarModel.currentWidth = overlayView.currentLineWidth
+        }
+        if toolbarModel.fadeMode != overlayView.fadeMode {
+            toolbarModel.fadeMode = overlayView.fadeMode
+        }
+        if toolbarModel.shapeFill != overlayView.shapeFill {
+            toolbarModel.shapeFill = overlayView.shapeFill
         }
     }
 
-    func updateHelpBarVisibility() {
-        let visible =
-            UserDefaults.standard.object(forKey: UserDefaults.helpBarVisibleKey) as? Bool ?? true
-        helpBarHost?.isHidden = !visible
-    }
-
-    private func layoutHelpBar() {
-        guard let host = helpBarHost, let container = contentView else { return }
-        let size = host.fittingSize
-        host.frame = NSRect(
-            x: (container.bounds.width - size.width) / 2,
-            y: 20,
-            width: size.width,
-            height: size.height)
-    }
-
-    func isPointInHelpBar(_ windowPoint: NSPoint) -> Bool {
-        guard let host = helpBarHost, !host.isHidden, let container = contentView else {
-            return false
+    func updateToolbarVisibility() {
+        guard let panel = toolbarPanel else { return }
+        let oldFeedbackPadding = feedbackBottomPadding
+        let defaults = AppDelegate.shared?.userDefaults ?? .standard
+        let persisted =
+            defaults.object(forKey: UserDefaults.toolbarVisibleKey) as? Bool
+            ?? UserDefaults.toolbarVisibleDefault
+        // Always-On is a read-only, click-through overlay, so it carries no toolbar. Hiding is
+        // a detach rather than a hidden view: a parent that ignores mouse events does not make
+        // its children click-through, so the bar has to leave the window group entirely.
+        let visible = persisted && overlayView?.isReadOnlyMode != true
+        let changed = panel.isAttached != visible
+        if visible {
+            panel.attach(to: self)
+        } else {
+            panel.detach()
         }
-        return host.frame.contains(container.convert(windowPoint, from: nil))
+        if changed {
+            cancelQuickPicker()
+            if let feedback = currentFeedbackView {
+                feedback.setFrameOrigin(
+                    NSPoint(
+                        x: feedback.frame.origin.x,
+                        y: feedback.frame.origin.y + feedbackBottomPadding - oldFeedbackPadding
+                    )
+                )
+            }
+        }
     }
 
-    var helpBarClearance: CGFloat {
-        guard let host = helpBarHost, !host.isHidden else { return 0 }
-        return host.frame.maxY
+    /// The bar's frame in overlay-window coordinates, which the overlay view shares, or `.zero`
+    /// while the bar is hidden. Single source of truth for everything that has to stay clear
+    /// of the bar now that the user can park it anywhere.
+    var toolbarFrame: NSRect {
+        guard let panel = toolbarPanel, panel.isAttached else { return .zero }
+        return NSRect(
+            origin: NSPoint(x: panel.frame.minX - frame.minX, y: panel.frame.minY - frame.minY),
+            size: panel.frame.size)
     }
 
-    private func handleHelpBarAction(_ action: HelpBarAction) {
+    /// The strip along the bottom of the overlay that the tool-feedback pill occupies: it sits
+    /// 20 pt off the bottom edge, its tallest form is 80 pt tall, and a pill that carries a line
+    /// preview is lifted by half that line's width on top of that.
+    static let feedbackBandTop: CGFloat = 20 + 80 + (QuickPickerView.widthOptions.max() ?? 0) / 2
+
+    /// How far the feedback pill has to be lifted to clear the bar. The bar only pushes it up
+    /// while it actually sits in the band the pill uses; parked anywhere else it costs nothing.
+    var toolbarClearance: CGFloat {
+        let bar = toolbarFrame
+        guard !bar.isEmpty, bar.minY < Self.feedbackBandTop else { return 0 }
+        return bar.maxY
+    }
+
+    var feedbackBottomPadding: CGFloat {
+        toolbarClearance > 0 ? toolbarClearance + 8 : 20
+    }
+
+    /// The largest slab of `bounds` left over once the bar is taken out of it, so a picker
+    /// placed inside it clears the bar wherever the user parked it. Falls back to the full
+    /// bounds when the two do not overlap or nothing usable remains.
+    static func placementBounds(_ bounds: NSRect, clearing bar: NSRect, gap: CGFloat) -> NSRect {
+        guard !bar.isEmpty, bounds.intersects(bar) else { return bounds }
+        let slabs = [
+            NSRect(
+                x: bounds.minX, y: bar.maxY + gap,
+                width: bounds.width, height: bounds.maxY - bar.maxY - gap),
+            NSRect(
+                x: bounds.minX, y: bounds.minY,
+                width: bounds.width, height: bar.minY - gap - bounds.minY),
+            NSRect(
+                x: bar.maxX + gap, y: bounds.minY,
+                width: bounds.maxX - bar.maxX - gap, height: bounds.height),
+            NSRect(
+                x: bounds.minX, y: bounds.minY,
+                width: bar.minX - gap - bounds.minX, height: bounds.height),
+        ]
+        // Measured through `size`, not `width`/`height`: those are standardized, so a slab the
+        // bar left no room for reports its negative extent as a positive one and wins on area.
+        let usable = slabs.filter { $0.size.width > 0 && $0.size.height > 0 }
+        return usable.max { $0.width * $0.height < $1.width * $1.height } ?? bounds
+    }
+
+    /// The display this overlay covers. `NSWindow.screen` is nil while the window is off
+    /// screen, so fall back to the display its frame overlaps.
+    var hostScreen: NSScreen? {
+        screen ?? NSScreen.screens.first { $0.frame.intersects(frame) } ?? NSScreen.main
+    }
+
+    func performToolbarAction(_ action: ToolbarAction) {
+        // The bar is a panel of its own, so a click on it never reaches the canvas that used to
+        // dismiss an open picker. Close it here, or the picker actions below are refused and a
+        // stale picker stays on screen behind the bar.
+        cancelQuickPicker()
+        if let activeField = overlayView.activeTextField {
+            overlayView.finalizeTextAnnotation(activeField)
+        }
         switch action {
         case .tool(let tool):
-            switch tool {
-            case .pen: AppDelegate.shared?.enablePenMode(NSMenuItem())
-            case .highlighter: AppDelegate.shared?.enableHighlighterMode(NSMenuItem())
-            case .arrow: AppDelegate.shared?.enableArrowMode(NSMenuItem())
-            case .line: AppDelegate.shared?.enableLineMode(NSMenuItem())
-            case .rectangle: AppDelegate.shared?.enableRectangleMode(NSMenuItem())
-            case .circle: AppDelegate.shared?.enableCircleMode(NSMenuItem())
-            case .counter: AppDelegate.shared?.enableCounterMode(NSMenuItem())
-            case .text: AppDelegate.shared?.enableTextMode(NSMenuItem())
-            case .select: AppDelegate.shared?.enableSelectMode(NSMenuItem())
-            case .eraser: AppDelegate.shared?.enableEraserMode(NSMenuItem())
-            }
+            AppDelegate.shared?.switchTool(to: tool)
         case .colorPicker:
-            beginQuickPicker(.color)
+            beginQuickPicker(.color, anchor: toolbarActionAnchor)
         case .widthPicker:
-            beginQuickPicker(.width)
+            beginQuickPicker(.width, anchor: toolbarActionAnchor)
         case .toggleFade:
-            AppDelegate.shared?.toggleFadeMode(NSMenuItem())
+            AppDelegate.shared?.toggleFadeMode(nil)
         case .toggleShapeFill:
             toggleShapeFill()
         case .deleteLast:
             overlayView.deleteLastItem()
         case .clearAll:
-            overlayView.clearAll()
+            performClearAll()
         case .undo:
             overlayView.undo()
         }
+    }
+
+    func performClearAll() {
+        // Clear first so ending a redaction drag finds nothing left to sample and lets
+        // the snapshot go. The live shape is dropped even on an empty canvas.
+        let cleared = overlayView.clearAll()
+        discardLiveDrawing()
+        if cleared {
+            SoundPlayer.shared.playClearAll()
+        }
+    }
+
+    private var toolbarActionAnchor: NSPoint {
+        let windowPoint = convertPoint(fromScreen: NSEvent.mouseLocation)
+        return overlayView.convert(windowPoint, from: nil)
+    }
+
+    deinit {
+        if let snapshot = mouseCoalescingSnapshot {
+            NSEvent.isMouseCoalescingEnabled = snapshot
+        }
+    }
+
+    override func orderOut(_ sender: Any?) {
+        cancelQuickPicker()
+        restoreMouseCoalescing()
+        overlayView.discardRedactionSamples()
+        super.orderOut(sender)
+    }
+
+    /// The overlay is resized on every show and whenever the display layout changes. AppKit
+    /// moves the toolbar panel with its parent, so the bar only needs the width it may occupy
+    /// and its clamp refreshed against the new frame.
+    override func setFrame(_ frameRect: NSRect, display displayFlag: Bool) {
+        guard let panel = toolbarPanel else {
+            super.setFrame(frameRect, display: displayFlag)
+            return
+        }
+        panel.aroundOverlayFrameChange {
+            super.setFrame(frameRect, display: displayFlag)
+        }
+    }
+
+    override func close() {
+        toolbarPanel?.tearDown()
+        toolbarPanel = nil
+        super.close()
+    }
+
+    override func resignKey() {
+        cancelQuickPicker()
+        restoreMouseCoalescing()
+        super.resignKey()
     }
 
     private func configureWindowLevel() {
@@ -222,6 +362,7 @@ class OverlayWindow: NSPanel {
     }
 
     @objc func updateFade() {
+        overlayView.compactExpiredAnnotations()
         overlayView.needsDisplay = true
 
         // Stop the loop if nothing is actively fading
@@ -234,101 +375,452 @@ class OverlayWindow: NSPanel {
 
     override var canBecomeMain: Bool { false }
 
-    func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    var isQuickPickerOpen: Bool { quickPicker != nil }
 
-    func beginQuickPicker(_ requestedMode: QuickPickerView.Mode) {
+    override func sendEvent(_ event: NSEvent) {
+        if routeOverlayMouseEvent(event) {
+            return
+        }
+
+        switch event.type {
+        case .keyDown:
+            if quickPicker != nil {
+                _ = handleQuickPickerKeyDown(event)
+                return
+            }
+            if handleOverlayShortcut(event) {
+                return
+            }
+            if isEditingAnnotationText, deliverKeyToAnnotationField(event) {
+                return
+            }
+        case .keyUp:
+            if quickPicker != nil {
+                _ = handleQuickPickerKeyUp(event)
+                return
+            }
+            if isEditingAnnotationText {
+                super.sendEvent(event)
+                return
+            }
+            if handleQuickPickerKeyUp(event) {
+                return
+            }
+        default:
+            break
+        }
+
+        super.sendEvent(event)
+    }
+
+    /// Canvas mouse goes through OverlayWindow's drawing handlers even when AppKit
+    /// would drop a synthetic or non-key event. Clicks on the annotation field still
+    /// take the normal first-responder path. While a picker is open, leftover mouse-up
+    /// restores coalescing and must not commit geometry. The toolbar is a separate panel,
+    /// so its clicks never reach this window at all.
+    private func routeOverlayMouseEvent(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .leftMouseDown, .leftMouseDragged, .leftMouseUp,
+            .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
+            break
+        case .scrollWheel:
+            return quickPicker != nil
+        default:
+            return false
+        }
+
+        // Read-only (Always-On) mode owns no mouse input: swallow so a synthetic or
+        // stray event can never reach the drawing handlers.
+        if overlayView.isReadOnlyMode {
+            return true
+        }
+
+        if quickPicker != nil {
+            switch event.type {
+            case .leftMouseDown:
+                mouseDown(with: event)
+            case .leftMouseDragged:
+                mouseDragged(with: event)
+            case .leftMouseUp:
+                pickerConsumedMouseDown = false
+                restoreMouseCoalescing()
+            case .rightMouseDown, .otherMouseDown:
+                cancelQuickPicker()
+            default:
+                break
+            }
+            return true
+        }
+
+        if isEventOverAnnotationText(event) {
+            return false
+        }
+
+        switch event.type {
+        case .leftMouseDown:
+            mouseDown(with: event)
+        case .leftMouseDragged:
+            mouseDragged(with: event)
+        case .leftMouseUp:
+            mouseUp(with: event)
+        case .rightMouseDown:
+            rightMouseDown(with: event)
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func isEventOverAnnotationText(_ event: NSEvent) -> Bool {
+        if let hit = contentView?.hitTest(event.locationInWindow),
+            hit is NSTextField || hit is NSTextView || hit is NSText
+        {
+            return true
+        }
+        guard let field = overlayView.activeTextField else { return false }
+        let point = overlayView.convert(event.locationInWindow, from: nil)
+        return field.frame.contains(point)
+    }
+
+    func beginQuickPicker(
+        _ requestedMode: QuickPickerView.Mode,
+        anchor requestedAnchor: NSPoint? = nil,
+        activationKey: String? = nil,
+        activationKeyCode: UInt16? = nil
+    ) {
         guard quickPicker == nil else { return }
-        let mode: QuickPickerView.Mode =
-            requestedMode == .width && overlayView.currentTool == .text ? .fontSize : requestedMode
-        let anchor = overlayView.convert(mouseLocationOutsideOfEventStream, from: nil)
-        var placementBounds = overlayView.bounds
-        placementBounds.origin.y += helpBarClearance
-        placementBounds.size.height -= helpBarClearance
+
+        discardLiveDrawing()
+
+        let mode = contextualPickerMode(for: requestedMode)
+        let defaults = pickerUserDefaults
+        let anchor =
+            requestedAnchor
+            ?? overlayView.convert(mouseLocationOutsideOfEventStream, from: nil)
+        // The bar can sit anywhere now, so hand the picker the largest slab of canvas that
+        // the bar does not occupy instead of assuming it hugs the bottom.
+        let placementBounds = Self.placementBounds(
+            overlayView.bounds, clearing: toolbarFrame, gap: ToolbarPanel.pickerGap)
         let picker = QuickPickerView(
             mode: mode,
             anchor: anchor,
             within: placementBounds,
             currentColor: overlayView.currentColor,
             currentWidth: overlayView.currentLineWidth,
-            currentFontSize: UserDefaults.standard.textToolFontSize
-        )
+            currentFontSize: defaults.textToolFontSize,
+            currentCounterSize: defaults.counterToolFontSize,
+            previewTool: overlayView.currentTool)
+
         overlayView.addSubview(picker)
         quickPicker = picker
         acceptedMouseMovedBeforePicker = acceptsMouseMovedEvents
         acceptsMouseMovedEvents = true
-        pickerMoveMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDragged]) {
-            [weak self] event in
-            guard let self, let picker = self.quickPicker else { return event }
-            let windowPoint = self.convertPoint(fromScreen: NSEvent.mouseLocation)
-            picker.updateSelection(mouseInSuperview: self.overlayView.convert(windowPoint, from: nil))
+        quickPickerInitialMouseLocation = NSEvent.mouseLocation
+
+        quickPickerActivationKeyCode = activationKeyCode
+        let key = activationKey ?? shortcut(for: requestedMode)
+        if activationKey == nil {
+            quickPickerInteraction = .open(key: key)
+        } else {
+            quickPickerInteraction = .waitingForRelease(
+                key: key, openedAt: CACurrentMediaTime(), moved: false, holdActive: false)
+            scheduleQuickPickerHold(for: key)
+        }
+
+        quickPickerMoveMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.mouseMoved, .leftMouseDragged]
+        ) { [weak self] event in
+            self?.handleQuickPickerMouseMovement(screenPoint: NSEvent.mouseLocation)
             return event
         }
     }
 
     func commitQuickPicker() {
-        guard let picker = quickPicker else { return }
-        dismissQuickPicker()
+        guard let picker = quickPicker, !pickerCommitInFlight else { return }
+        pickerCommitInFlight = true
+        quickPickerHoldTask?.cancel()
+        quickPickerHoldTask = nil
 
         switch picker.mode {
         case .color:
-            guard let color = picker.selectedColor, let appDelegate = AppDelegate.shared else { return }
-            if let colorData = try? NSKeyedArchiver.archivedData(
-                withRootObject: color, requiringSecureCoding: false)
-            {
-                UserDefaults.standard.set(colorData, forKey: "SelectedColor")
+            if let color = picker.selectedColor {
+                applyColor(color)
             }
-            appDelegate.currentColor = color
-            appDelegate.overlayWindows.values.forEach { $0.currentColor = color }
-            appDelegate.updateStatusBarIcon(with: color)
-            CursorHighlightManager.shared.annotationColor = color
-            showFeedback("Color", lineColor: color, lineWidth: overlayView.currentLineWidth)
         case .width:
-            guard let width = picker.selectedWidth else { return }
-            applyLineWidth(width)
+            if let width = picker.selectedWidth {
+                applyLineWidth(width, showsFeedback: false)
+            }
         case .fontSize:
-            guard let size = picker.selectedFontSize else { return }
-            applyTextFontSize(size)
+            if let size = picker.selectedFontSize {
+                applyTextFontSize(size, showsFeedback: false)
+            }
+        case .counterSize:
+            if let size = picker.selectedCounterSize {
+                applyCounterFontSize(size, showsFeedback: false)
+            }
+        }
+
+        picker.animateCommittedSelection { [weak self, weak picker] in
+            guard let self, self.quickPicker === picker else { return }
+            self.dismissQuickPicker()
         }
     }
 
     func cancelQuickPicker() {
         guard quickPicker != nil else { return }
+        restoreMouseCoalescing()
         dismissQuickPicker()
     }
 
-    private func dismissQuickPicker() {
-        if let monitor = pickerMoveMonitor {
-            NSEvent.removeMonitor(monitor)
-            pickerMoveMonitor = nil
+    override func mouseMoved(with event: NSEvent) {
+        guard quickPicker != nil else {
+            super.mouseMoved(with: event)
+            return
         }
-        quickPicker?.removeFromSuperview()
-        quickPicker = nil
-        acceptsMouseMovedEvents = acceptedMouseMovedBeforePicker
+        handleQuickPickerMouseMovement(screenPoint: convertPoint(toScreen: event.locationInWindow))
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard quickPicker != nil else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        cancelQuickPicker()
     }
 
     override func keyUp(with event: NSEvent) {
-        if quickPicker != nil {
-            let key = event.characters?.lowercased() ?? ""
-            if key == ShortcutManager.shared.getShortcut(for: .colorPicker)
-                || key == ShortcutManager.shared.getShortcut(for: .lineWidthPicker)
-            {
-                commitQuickPicker()
-                return
-            }
+        if handleQuickPickerKeyUp(event) {
+            return
         }
         super.keyUp(with: event)
     }
 
-    override func mouseDown(with event: NSEvent) {
-        if quickPicker != nil {
-            commitQuickPicker()
+    private var pickerUserDefaults: UserDefaults {
+        AppDelegate.shared?.userDefaults ?? .standard
+    }
+
+    private var runtimeOverlayWindows: [OverlayWindow] {
+        var windows = AppDelegate.shared?.overlayWindows.values.map { $0 } ?? []
+        if !windows.contains(where: { $0 === self }) {
+            windows.append(self)
+        }
+        return windows
+    }
+
+    private func contextualPickerMode(for requestedMode: QuickPickerView.Mode) -> QuickPickerView.Mode {
+        guard requestedMode == .width else { return requestedMode }
+        if overlayView.currentTool == .text || overlayView.activeTextField != nil {
+            return .fontSize
+        }
+        if overlayView.currentTool == .counter {
+            return .counterSize
+        }
+        return .width
+    }
+
+    private func shortcut(for mode: QuickPickerView.Mode) -> String {
+        switch mode {
+        case .color:
+            return ShortcutManager.shared.getShortcut(for: .colorPicker)
+        case .width, .fontSize, .counterSize:
+            return ShortcutManager.shared.getShortcut(for: .lineWidthPicker)
+        }
+    }
+
+    private func scheduleQuickPickerHold(for key: String) {
+        let task = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard let interaction = self.quickPickerInteraction,
+                case .waitingForRelease(let activeKey, let openedAt, let moved, _) = interaction,
+                activeKey == key
+            else { return }
+            self.quickPickerInteraction = .waitingForRelease(
+                key: activeKey, openedAt: openedAt, moved: moved, holdActive: true)
+        }
+        quickPickerHoldTask = task
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.quickPickerHoldDuration, execute: task)
+    }
+
+    private func handleQuickPickerMouseMovement(screenPoint: NSPoint) {
+        guard !pickerCommitInFlight, let picker = quickPicker,
+            let interaction = quickPickerInteraction,
+            case .waitingForRelease(let key, let openedAt, _, _) = interaction
+        else { return }
+
+        if let initial = quickPickerInitialMouseLocation,
+            hypot(screenPoint.x - initial.x, screenPoint.y - initial.y) < 0.5
+        {
             return
         }
 
-        isHelpBarGestureActive = isPointInHelpBar(event.locationInWindow)
-        if isHelpBarGestureActive {
+        quickPickerInteraction = .waitingForRelease(
+            key: key, openedAt: openedAt, moved: true, holdActive: true)
+        let windowPoint = convertPoint(fromScreen: screenPoint)
+        picker.updateSelection(mouseInSuperview: overlayView.convert(windowPoint, from: nil))
+    }
+
+    private var isEditingAnnotationText: Bool {
+        if overlayView.activeTextField != nil { return true }
+        if firstResponder is NSTextField || firstResponder is NSTextView { return true }
+        return false
+    }
+
+    /// Types c / [ / ] into the live annotation field so those picker keys are not
+    /// stolen. Other keys, including Shift+Return, Cmd shortcuts, and Delete, take
+    /// the normal sendEvent path and are never appended via stringValue.
+    @discardableResult
+    private func deliverKeyToAnnotationField(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+        else { return false }
+        let chars = event.characters ?? ""
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        guard key == "c" || key == "[" || key == "]" else { return false }
+        guard !chars.isEmpty else { return false }
+        guard let editor = overlayView.activeTextField?.currentEditor() ?? (firstResponder as? NSText)
+        else { return false }
+
+        editor.insertText(chars)
+        if let field = overlayView.activeTextField {
+            overlayView.controlTextDidChange(
+                Notification(name: NSControl.textDidChangeNotification, object: field))
+        }
+        return true
+    }
+
+    private func handleQuickPickerKeyDown(_ event: NSEvent) -> Bool {
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+
+        if let picker = quickPicker {
+            if pickerCommitInFlight {
+                return true
+            }
+            if event.isARepeat {
+                return true
+            }
+            if event.keyCode == 53 {
+                cancelQuickPicker()
+                return true
+            }
+            if let digit = Int(key), (1...picker.optionCount).contains(digit) {
+                picker.select(index: digit - 1)
+                commitQuickPicker()
+                return true
+            }
+            let action: ShortcutKey = picker.mode == .color ? .colorPicker : .lineWidthPicker
+            if ShortcutManager.shared.matches(event, tool: action) {
+                cancelQuickPicker()
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /// All editable overlay actions share exact key/modifier matching and the same focus guards.
+    @discardableResult
+    private func handleOverlayShortcut(_ event: NSEvent) -> Bool {
+        guard !isEditingAnnotationText, !overlayView.isReadOnlyMode,
+            let action = ShortcutManager.shared.action(for: event)
+        else { return false }
+
+        switch action {
+        case .pen: AppDelegate.shared?.enablePenMode(NSMenuItem())
+        case .arrow: AppDelegate.shared?.enableArrowMode(NSMenuItem())
+        case .line: AppDelegate.shared?.enableLineMode(NSMenuItem())
+        case .highlighter: AppDelegate.shared?.enableHighlighterMode(NSMenuItem())
+        case .rectangle: AppDelegate.shared?.enableRectangleMode(NSMenuItem())
+        case .circle: AppDelegate.shared?.enableCircleMode(NSMenuItem())
+        case .redact: AppDelegate.shared?.enableRedactMode(NSMenuItem())
+        case .counter: AppDelegate.shared?.enableCounterMode(NSMenuItem())
+        case .text: AppDelegate.shared?.enableTextMode(NSMenuItem())
+        case .select: AppDelegate.shared?.enableSelectMode(NSMenuItem())
+        case .eraser: AppDelegate.shared?.enableEraserMode(NSMenuItem())
+        case .colorPicker, .lineWidthPicker:
+            if !event.isARepeat {
+                beginQuickPicker(action == .colorPicker ? .color : .width,
+                    activationKey: ShortcutManager.shared.getShortcut(for: action),
+                    activationKeyCode: event.keyCode)
+            }
+        case .toggleBoard: AppDelegate.shared?.toggleBoardVisibility(nil)
+        case .toggleClickEffects: AppDelegate.shared?.toggleClickEffects(nil)
+        case .toggleBackgroundDimming: toggleBackgroundDimming(with: event)
+        case .toggleFade: AppDelegate.shared?.toggleFadeMode(nil)
+        case .toggleShapeFill: toggleShapeFill()
+        case .toggleToolbar:
+            if !event.isARepeat { AppDelegate.shared?.toggleToolbar() }
+        case .decreaseSize: stepActiveLadder(-1)
+        case .increaseSize: stepActiveLadder(1)
+        case .clearAll: performClearAll()
+        }
+        return true
+    }
+
+    private func handleQuickPickerKeyUp(_ event: NSEvent) -> Bool {
+        guard quickPicker != nil, let interaction = quickPickerInteraction,
+            case .waitingForRelease(let key, let openedAt, let moved, let holdActive) =
+                interaction,
+            quickPickerActivationKeyCode.map({ event.keyCode == $0 })
+                ?? (event.charactersIgnoringModifiers?.lowercased() == key)
+        else { return false }
+
+        quickPickerHoldTask?.cancel()
+        quickPickerHoldTask = nil
+        if holdActive || moved || CACurrentMediaTime() - openedAt >= Self.quickPickerHoldDuration {
+            commitQuickPicker()
+        } else {
+            quickPickerInteraction = .open(key: key)
+        }
+        return true
+    }
+
+    private func applyColor(_ color: NSColor) {
+        if let colorData = try? NSKeyedArchiver.archivedData(
+            withRootObject: color, requiringSecureCoding: false)
+        {
+            pickerUserDefaults.set(colorData, forKey: "SelectedColor")
+        }
+
+        let appDelegate = AppDelegate.shared
+        appDelegate?.currentColor = color
+        runtimeOverlayWindows.forEach { $0.currentColor = color }
+        appDelegate?.updateStatusBarIcon(with: color)
+        CursorHighlightManager.shared.annotationColor = color
+    }
+
+    private func dismissQuickPicker() {
+        quickPickerHoldTask?.cancel()
+        quickPickerHoldTask = nil
+        if let monitor = quickPickerMoveMonitor {
+            NSEvent.removeMonitor(monitor)
+            quickPickerMoveMonitor = nil
+        }
+        quickPicker?.removeFromSuperview()
+        quickPicker = nil
+        quickPickerInteraction = nil
+        quickPickerActivationKeyCode = nil
+        quickPickerInitialMouseLocation = nil
+        pickerCommitInFlight = false
+        acceptsMouseMovedEvents = acceptedMouseMovedBeforePicker
+        restoreMouseCoalescing()
+    }
+
+
+    override func mouseDown(with event: NSEvent) {
+        if let picker = quickPicker {
+            pickerConsumedMouseDown = true
+            if pickerCommitInFlight {
+                return
+            }
+            let point = overlayView.convert(event.locationInWindow, from: nil)
+            if picker.select(at: point) {
+                commitQuickPicker()
+            } else {
+                cancelQuickPicker()
+            }
             return
         }
+
         // Update cursor highlight for local events (global monitors don't capture our own app's events)
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive {
@@ -339,7 +831,14 @@ class OverlayWindow: NSPanel {
             NotificationCenter.default.post(name: .cursorHighlightNeedsUpdate, object: nil)
         }
 
+        // A drag whose mouse-up never arrived is still live: macOS can drop a mouse-up, for
+        // example a synthesized one. Finish it as that mouse-up would have, so starting the
+        // next gesture never silently throws away a finished stroke, shape, or redaction.
+        if commitLiveDrawing(timestamp: event.timestamp), overlayView.fadeMode {
+            startFadeLoop()
+        }
         lastLiveShapeRect = nil
+
         let startPoint = event.locationInWindow
         anchorPoint = startPoint
         overlayView.lastMousePosition = startPoint  // Track mouse position for paste
@@ -352,8 +851,14 @@ class OverlayWindow: NSPanel {
 
         // Clicking outside an open label commits it; it never starts a new one.
         if let activeTextField = overlayView.activeTextField {
-            overlayView.finalizeTextAnnotation(activeTextField)
-            return
+            // Clicking away is how most labels get placed, so it commits through the same
+            // path as Enter and Esc. When that switches the tool, this click has already
+            // done its job and must not also start a gesture with the new tool.
+            let toolBeforeCommit = overlayView.currentTool
+            overlayView.commitTextField(activeTextField)
+            if overlayView.currentTool != toolBeforeCommit {
+                return
+            }
         }
         
         // Handle selection mode
@@ -461,7 +966,11 @@ class OverlayWindow: NSPanel {
         }
 
         if overlayView.currentTool == .text {
-            for (index, annotation) in overlayView.textAnnotations.enumerated() {
+            // A label under a newer redaction, even partly, stays out of reach, so a drag or
+            // double-click there can never bring out its hidden text.
+            for (index, annotation) in overlayView.textAnnotations.enumerated()
+            where !overlayView.isPointCoveredByRedaction(startPoint, over: annotation.creationTime)
+                && !overlayView.isTextCoveredByRedaction(annotation) {
                 let textRect = getTextRect(for: annotation)
                 if textRect.contains(startPoint) {
                     if clickCount == 1 {
@@ -500,45 +1009,57 @@ class OverlayWindow: NSPanel {
                 text: "",
                 position: startPoint,
                 color: currentColor,
-                fontSize: UserDefaults.standard.textToolFontSize,
-                hasBackground: UserDefaults.standard.textBackgroundEnabled,
-                backgroundIsDark: UserDefaults.standard.textBackgroundDark
+                fontSize: pickerUserDefaults.textToolFontSize,
+                hasBackground: pickerUserDefaults.textBackgroundEnabled,
+                backgroundIsDark: pickerUserDefaults.textBackgroundDark
             )
             overlayView.createTextField(at: startPoint)
         }
 
         switch overlayView.currentTool {
         case .pen:
+            activeFreehandTool = .pen
             beginUncoalescedFreehandInput()
-            let t = event.timestamp
             overlayView.beginFreehandStroke(
                 DrawingPath(
-                    points: [TimedPoint(point: startPoint, timestamp: t)],
+                    points: [TimedPoint(point: startPoint, timestamp: event.timestamp)],
                     color: currentColor,
-                    lineWidth: overlayView.currentLineWidth),
+                    lineWidth: overlayView.currentLineWidth
+                ),
                 tool: .pen
             )
         case .arrow:
+            activeShapeTool = .arrow
             overlayView.currentArrow = Arrow(
                 startPoint: startPoint, endPoint: startPoint, color: currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
         case .line:
+            activeShapeTool = .line
             overlayView.currentLine = Line(
                 startPoint: startPoint, endPoint: startPoint, color: currentColor, lineWidth: overlayView.currentLineWidth, creationTime: nil)
         case .highlighter:
+            activeFreehandTool = .highlighter
             beginUncoalescedFreehandInput()
-            let t = event.timestamp
             overlayView.beginFreehandStroke(
                 DrawingPath(
-                    points: [TimedPoint(point: startPoint, timestamp: t)],
-                    color: currentColor.withAlphaComponent(0.3),
-                    lineWidth: overlayView.currentLineWidth),
+                    points: [TimedPoint(point: startPoint, timestamp: event.timestamp)],
+                    color: currentColor,
+                    lineWidth: overlayView.currentLineWidth
+                ),
                 tool: .highlighter
             )
-        case .rectangle:
+        case .rectangle, .redact:
+            activeShapeTool = overlayView.currentTool
             overlayView.currentRectangle = Rectangle(
                 startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor,
-                lineWidth: overlayView.currentLineWidth, isFilled: overlayView.shapeFill, creationTime: nil)
+                lineWidth: overlayView.currentLineWidth,
+                isFilled: overlayView.currentTool == .rectangle && overlayView.shapeFill,
+                creationTime: nil,
+                style: overlayView.currentTool == .redact ? overlayView.pickerUserDefaults.redactionStyle : .outline)
+            if overlayView.currentRectangle?.needsSample == true {
+                overlayView.beginRedactionDrag()
+            }
         case .circle:
+            activeShapeTool = .circle
             overlayView.currentCircle = Circle(
                 startPoint: startPoint, endPoint: startPoint, color: overlayView.currentColor,
                 lineWidth: overlayView.currentLineWidth, isFilled: overlayView.shapeFill, creationTime: nil)
@@ -554,21 +1075,20 @@ class OverlayWindow: NSPanel {
         overlayView.needsDisplay = true
     }
 
+    /// Slop added to a label that draws without a background. Clicking and double-clicking
+    /// a label is more forgiving than the view's own hit test, which this preserves.
+    static var plainLabelSlop: NSEdgeInsets { NSEdgeInsets(top: 10, left: 0, bottom: 0, right: 20) }
+
     private func getTextRect(for annotation: TextAnnotation) -> NSRect {
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: annotation.fontSize)
-        ]
-        let size = annotation.text.size(withAttributes: attributes)
-        return NSRect(
-            x: annotation.position.x,
-            y: annotation.position.y,
-            width: size.width + 20,
-            height: size.height + 10
-        )
+        annotation.bounds(fallbackInsets: Self.plainLabelSlop)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        if isHelpBarGestureActive { return }
+        if quickPicker != nil {
+            handleQuickPickerMouseMovement(screenPoint: convertPoint(toScreen: event.locationInWindow))
+            return
+        }
+
         // Update cursor highlight position during drag (animation loop handles rendering)
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive && cursorManager.isMouseDown {
@@ -577,7 +1097,17 @@ class OverlayWindow: NSPanel {
         }
 
         let currentPoint = event.locationInWindow
-        overlayView.lastMousePosition = currentPoint
+        overlayView.lastMousePosition = currentPoint  // Track mouse position for paste
+
+        // Ahead of the selection branches, which a mid-drag switch to Select would reach.
+        if let strokeTool = activeFreehandTool {
+            continueFreehandStroke(strokeTool, to: currentPoint, timestamp: event.timestamp)
+            return
+        }
+        if let shapeTool = activeShapeTool {
+            continueShape(shapeTool, to: currentPoint)
+            return
+        }
         
         // Handle rectangle selection drawing
         if overlayView.currentTool == .select && overlayView.isDrawingSelectionRect {
@@ -600,6 +1130,9 @@ class OverlayWindow: NSPanel {
                 y: currentPoint.y - dragStart.y
             )
             
+            if overlayView.selectionHasSampledRedaction {
+                overlayView.beginRedactionDrag()
+            }
             overlayView.moveSelectedObjects(by: delta)
             overlayView.selectionDragOffset = currentPoint
             overlayView.needsDisplay = true
@@ -609,6 +1142,13 @@ class OverlayWindow: NSPanel {
         if let draggedIndex = overlayView.draggedTextAnnotationIndex,
             let dragOffset = overlayView.dragOffset
         {
+            // The label can vanish mid-drag if fade compaction outruns the remap.
+            guard draggedIndex < overlayView.textAnnotations.count else {
+                overlayView.draggedTextAnnotationIndex = nil
+                overlayView.originalTextPosition = nil
+                overlayView.dragOffset = nil
+                return
+            }
             // Update the position of the dragged text annotation
             let newPosition = NSPoint(
                 x: currentPoint.x - dragOffset.x,
@@ -619,60 +1159,42 @@ class OverlayWindow: NSPanel {
             return
         }
 
-        switch overlayView.currentTool {
-        case .pen:
-            let t = event.timestamp
-            let prev = overlayView.currentPath?.points.last?.point ?? currentPoint
-            if isShiftConstraintActive {
-                updatePathWithShiftConstraint(
-                    path: &overlayView.currentPath,
-                    to: currentPoint,
-                    timestamp: t
-                )
-                overlayView.rebuildCurrentFreehandStroke(tool: .pen)
-                overlayView.needsDisplay = true
-            } else {
-                overlayView.appendFreehandPoint(
-                    TimedPoint(point: currentPoint, timestamp: t),
-                    tool: .pen)
-                invalidateLiveSegment(from: prev, to: currentPoint, pad: overlayView.currentLineWidth + 6)
-            }
-        case .highlighter:
-            let t = event.timestamp
-            let prev = overlayView.currentHighlight?.points.last?.point ?? currentPoint
-            if isShiftConstraintActive {
-                updatePathWithShiftConstraint(
-                    path: &overlayView.currentHighlight,
-                    to: currentPoint,
-                    timestamp: t
-                )
-                overlayView.rebuildCurrentFreehandStroke(tool: .highlighter)
-                overlayView.needsDisplay = true
-            } else {
-                overlayView.appendFreehandPoint(
-                    TimedPoint(point: currentPoint, timestamp: t),
-                    tool: .highlighter)
-                invalidateLiveSegment(
-                    from: prev, to: currentPoint,
-                    pad: overlayView.currentLineWidth
-                        * ToolType.highlighter.strokeWidthMultiplier / 2 + 6)
-            }
+        // Drawing tools latch at mouseDown above, so only the eraser acts on currentTool here.
+        if overlayView.currentTool == .eraser {
+            overlayView.eraseAtPoint(currentPoint)
+            overlayView.needsDisplay = true
+        }
+    }
+
+    private func continueShape(_ tool: ToolType, to currentPoint: NSPoint) {
+        switch tool {
         case .arrow:
             overlayView.currentArrow?.endPoint = isShiftConstraintActive
                 ? snapToStraightLine(from: anchorPoint, to: currentPoint)
                 : currentPoint
             if let arrow = overlayView.currentArrow {
                 invalidateLiveShape(
-                    rectSpanning(arrow.startPoint, arrow.endPoint, pad: max(arrow.lineWidth * 4, 30)))
+                    rectSpanning(
+                        arrow.startPoint,
+                        arrow.endPoint,
+                        padding: max(arrow.lineWidth * 4, 30)
+                    )
+                )
             }
         case .line:
             overlayView.currentLine?.endPoint = isShiftConstraintActive
                 ? snapToStraightLine(from: anchorPoint, to: currentPoint)
                 : currentPoint
             if let line = overlayView.currentLine {
-                invalidateLiveShape(rectSpanning(line.startPoint, line.endPoint, pad: line.lineWidth + 6))
+                invalidateLiveShape(
+                    rectSpanning(
+                        line.startPoint,
+                        line.endPoint,
+                        padding: line.lineWidth / 2 + 6
+                    )
+                )
             }
-        case .rectangle:
+        case .rectangle, .redact:
             var newStart = anchorPoint
             var newEnd = currentPoint
 
@@ -685,13 +1207,22 @@ class OverlayWindow: NSPanel {
 
             if isShiftConstraintActive {
                 (newStart, newEnd) = constrainToSquare(
-                    start: newStart, end: newEnd, anchor: anchorPoint, centerMode: isCenterModeActive)
+                    start: newStart,
+                    end: newEnd,
+                    anchor: anchorPoint,
+                    centerMode: isCenterModeActive
+                )
             }
 
             overlayView.currentRectangle?.startPoint = newStart
             overlayView.currentRectangle?.endPoint = newEnd
             invalidateLiveShape(
-                rectSpanning(newStart, newEnd, pad: overlayView.currentLineWidth + 6))
+                rectSpanning(
+                    newStart,
+                    newEnd,
+                    padding: overlayView.currentLineWidth / 2 + 6
+                )
+            )
         case .circle:
             var newStart = anchorPoint
             var newEnd = currentPoint
@@ -705,60 +1236,224 @@ class OverlayWindow: NSPanel {
 
             if isShiftConstraintActive {
                 (newStart, newEnd) = constrainToSquare(
-                    start: newStart, end: newEnd, anchor: anchorPoint, centerMode: isCenterModeActive)
+                    start: newStart,
+                    end: newEnd,
+                    anchor: anchorPoint,
+                    centerMode: isCenterModeActive
+                )
             }
 
             overlayView.currentCircle?.startPoint = newStart
             overlayView.currentCircle?.endPoint = newEnd
             invalidateLiveShape(
-                rectSpanning(newStart, newEnd, pad: overlayView.currentLineWidth + 6))
-        case .text:
+                rectSpanning(
+                    newStart,
+                    newEnd,
+                    padding: overlayView.currentLineWidth / 2 + 6
+                )
+            )
+        default:
             break
-        case .counter:
-            break
-        case .select:
-            break
-        case .eraser:
-            overlayView.eraseAtPoint(currentPoint)
-            overlayView.needsDisplay = true
         }
     }
 
-    private func rectSpanning(_ a: NSPoint, _ b: NSPoint, pad: CGFloat) -> NSRect {
+    private func continueFreehandStroke(_ tool: ToolType, to point: NSPoint, timestamp: TimeInterval) {
+        // Read through, rather than binding the stroke: a live copy of the struct
+        // would keep a second reference to the points buffer and turn the append
+        // below into a full array copy on every event.
+        let previousPoint =
+            (tool == .pen
+                ? overlayView.currentPath?.points.last?.point
+                : overlayView.currentHighlight?.points.last?.point) ?? point
+
+        if isShiftConstraintActive {
+            if tool == .pen {
+                updatePathWithShiftConstraint(
+                    path: &overlayView.currentPath,
+                    to: point,
+                    timestamp: timestamp
+                )
+            } else {
+                updatePathWithShiftConstraint(
+                    path: &overlayView.currentHighlight,
+                    to: point,
+                    timestamp: timestamp
+                )
+            }
+            overlayView.rebuildCurrentFreehandStroke(tool: tool)
+            overlayView.needsDisplay = true
+        } else {
+            overlayView.appendFreehandPoint(
+                TimedPoint(point: point, timestamp: timestamp),
+                tool: tool
+            )
+            invalidateLiveSegment(from: previousPoint, to: point, tool: tool)
+        }
+    }
+
+    // Rebases timestamps so the fade clock starts at mouseUp
+    private func commitFreehandStroke(_ tool: ToolType, timestamp: TimeInterval) {
+        guard var stroke = overlayView.endFreehandStroke(tool: tool),
+            let firstTimestamp = stroke.points.first?.timestamp
+        else { return }
+
+        let offset = timestamp - firstTimestamp
+        for index in stroke.points.indices {
+            stroke.points[index].timestamp += offset
+        }
+        stroke.creationTime = CACurrentMediaTime()
+
+        if tool == .pen {
+            overlayView.registerUndo(action: .addPath(stroke))
+            overlayView.paths.append(stroke)
+        } else {
+            overlayView.registerUndo(action: .addHighlight(stroke))
+            overlayView.highlightPaths.append(stroke)
+        }
+    }
+
+    private func commitShape(_ tool: ToolType) {
+        switch tool {
+        case .arrow:
+            if var currentArrow = overlayView.currentArrow {
+                currentArrow.creationTime = CACurrentMediaTime()
+                overlayView.registerUndo(action: .addArrow(currentArrow))
+                overlayView.arrows.append(currentArrow)
+                overlayView.currentArrow = nil
+            }
+        case .line:
+            if var currentLine = overlayView.currentLine {
+                currentLine.creationTime = CACurrentMediaTime()
+                overlayView.registerUndo(action: .addLine(currentLine))
+                overlayView.lines.append(currentLine)
+                overlayView.currentLine = nil
+            }
+        case .rectangle, .redact:
+            if var currentRectangle = overlayView.currentRectangle {
+                currentRectangle.creationTime = CACurrentMediaTime()
+                // Keep the live sample on screen, but not on the undo stack.
+                var undoRectangle = currentRectangle
+                undoRectangle.sample = nil
+                overlayView.registerUndo(action: .addRectangle(undoRectangle))
+                overlayView.rectangles.append(currentRectangle)
+                overlayView.currentRectangle = nil
+            }
+        case .circle:
+            if var currentCircle = overlayView.currentCircle {
+                currentCircle.creationTime = CACurrentMediaTime()
+                overlayView.registerUndo(action: .addCircle(currentCircle))
+                overlayView.circles.append(currentCircle)
+                overlayView.currentCircle = nil
+            }
+        default:
+            break
+        }
+    }
+
+    // Discards the in-flight stroke and restores mouse coalescing. Dropping the
+    // latch alone would freeze the stroke on screen with no commit, fade, or clear path.
+    private func cancelFreehandStroke() {
+        restoreMouseCoalescing()
+        guard let tool = activeFreehandTool else { return }
+        _ = overlayView.endFreehandStroke(tool: tool)
+        activeFreehandTool = nil
+        overlayView.needsDisplay = true
+    }
+
+    /// Commits the live freehand stroke or shape on the tool its drag started with, and ends
+    /// any redaction preview. Returns whether anything was committed.
+    @discardableResult
+    private func commitLiveDrawing(timestamp: TimeInterval) -> Bool {
+        overlayView.endRedactionDrag()
+        restoreMouseCoalescing()
+        var committed = false
+        if let strokeTool = activeFreehandTool {
+            commitFreehandStroke(strokeTool, timestamp: timestamp)
+            activeFreehandTool = nil
+            committed = true
+        }
+        if let shapeTool = activeShapeTool {
+            commitShape(shapeTool)
+            activeShapeTool = nil
+            committed = true
+        }
+        return committed
+    }
+
+    /// Drops live freehand and shape previews without committing them.
+    private func discardLiveDrawing() {
+        cancelFreehandStroke()
+        activeShapeTool = nil
+        _ = overlayView.endFreehandStroke(tool: .pen)
+        _ = overlayView.endFreehandStroke(tool: .highlighter)
+        overlayView.currentArrow = nil
+        overlayView.currentLine = nil
+        overlayView.currentRectangle = nil
+        overlayView.currentCircle = nil
+        overlayView.endRedactionDrag()
+        lastLiveShapeRect = nil
+        overlayView.needsDisplay = true
+    }
+
+    func prepareForAlwaysOnMode() {
+        cancelQuickPicker()
+        restoreMouseCoalescing()
+        cancelFreehandStroke()
+    }
+
+    private func rectSpanning(_ first: NSPoint, _ second: NSPoint, padding: CGFloat) -> NSRect {
         NSRect(
-            x: min(a.x, b.x), y: min(a.y, b.y),
-            width: abs(a.x - b.x), height: abs(a.y - b.y)
-        ).insetBy(dx: -pad, dy: -pad)
+            x: min(first.x, second.x),
+            y: min(first.y, second.y),
+            width: abs(first.x - second.x),
+            height: abs(first.y - second.y)
+        ).insetBy(dx: -padding, dy: -padding)
     }
 
-    private func invalidateLiveSegment(from: NSPoint, to: NSPoint, pad: CGFloat) {
-        overlayView.setNeedsDisplay(rectSpanning(from, to, pad: pad))
-    }
-
-    private func beginUncoalescedFreehandInput() {
-        guard !restoresMouseCoalescing, NSEvent.isMouseCoalescingEnabled else { return }
-        NSEvent.isMouseCoalescingEnabled = false
-        restoresMouseCoalescing = true
-    }
-
-    private func restoreMouseCoalescing() {
-        guard restoresMouseCoalescing else { return }
-        NSEvent.isMouseCoalescingEnabled = true
-        restoresMouseCoalescing = false
+    private func invalidateLiveSegment(from: NSPoint, to: NSPoint, tool: ToolType) {
+        let padding = overlayView.currentLineWidth * tool.strokeWidthMultiplier / 2 + 6
+        overlayView.setNeedsDisplay(rectSpanning(from, to, padding: padding))
     }
 
     private func invalidateLiveShape(_ rect: NSRect) {
-        let dirty = lastLiveShapeRect.map { $0.union(rect) } ?? rect
-        overlayView.setNeedsDisplay(dirty)
+        overlayView.setNeedsDisplay(lastLiveShapeRect.map { $0.union(rect) } ?? rect)
         lastLiveShapeRect = rect
     }
 
+    private func beginUncoalescedFreehandInput() {
+        if mouseCoalescingSnapshot == nil {
+            mouseCoalescingSnapshot = NSEvent.isMouseCoalescingEnabled
+        }
+        NSEvent.isMouseCoalescingEnabled = false
+    }
+
+    private func restoreMouseCoalescing() {
+        guard let snapshot = mouseCoalescingSnapshot else { return }
+        NSEvent.isMouseCoalescingEnabled = snapshot
+        mouseCoalescingSnapshot = nil
+    }
+
     override func mouseUp(with event: NSEvent) {
-        restoreMouseCoalescing()
-        if isHelpBarGestureActive {
-            isHelpBarGestureActive = false
+        // Before any early return, so a tool switch mid-drag never leaves the snapshot held.
+        overlayView.endRedactionDrag()
+
+        if pickerConsumedMouseDown {
+            pickerConsumedMouseDown = false
+            restoreMouseCoalescing()
             return
         }
+        if quickPicker != nil {
+            restoreMouseCoalescing()
+            return
+        }
+
+        // Commit before the selection and text branches below, which return early.
+        commitLiveDrawing(timestamp: event.timestamp)
+
+        if overlayView.fadeMode {
+            startFadeLoop()
+        }
+
         let cursorManager = CursorHighlightManager.shared
         if cursorManager.isActive {
             cursorManager.startReleaseAnimation()
@@ -816,175 +1511,76 @@ class OverlayWindow: NSPanel {
             }
             overlayView.selectionDragOffset = nil
             overlayView.selectionOriginalData.removeAll()
+            overlayView.needsDisplay = true
             return
         }
 
         if let draggedIndex = overlayView.draggedTextAnnotationIndex {
-            let oldPosition =
-                overlayView.originalTextPosition
-                ?? overlayView.textAnnotations[draggedIndex].position
-            let newPosition = overlayView.textAnnotations[draggedIndex].position
-            if newPosition != oldPosition {
-                overlayView.registerUndo(action: .moveText(draggedIndex, oldPosition, newPosition))
+            if draggedIndex < overlayView.textAnnotations.count {
+                let oldPosition =
+                    overlayView.originalTextPosition
+                    ?? overlayView.textAnnotations[draggedIndex].position
+                let newPosition = overlayView.textAnnotations[draggedIndex].position
+                if newPosition != oldPosition {
+                    overlayView.registerUndo(
+                        action: .moveText(draggedIndex, oldPosition, newPosition))
+                }
             }
             overlayView.draggedTextAnnotationIndex = nil
             overlayView.originalTextPosition = nil
             overlayView.dragOffset = nil
         }
 
-        switch overlayView.currentTool {
-        case .pen:
-            if var currentPath = overlayView.endFreehandStroke(tool: .pen) {
-                let finalTime = event.timestamp
-                guard let minTimestamp = currentPath.points.first?.timestamp else {
-                    return
-                }
-                let offset = finalTime - minTimestamp
-                for i in currentPath.points.indices {
-                    currentPath.points[i].timestamp += offset
-                }
-                overlayView.registerUndo(action: .addPath(currentPath))
-                overlayView.paths.append(currentPath)
-            }
-        case .arrow:
-            if var currentArrow = overlayView.currentArrow {
-                currentArrow.creationTime = CACurrentMediaTime()
-                overlayView.registerUndo(action: .addArrow(currentArrow))
-                overlayView.arrows.append(currentArrow)
-                overlayView.currentArrow = nil
-            }
-        case .line:
-            if var currentLine = overlayView.currentLine {
-                currentLine.creationTime = CACurrentMediaTime()
-                overlayView.registerUndo(action: .addLine(currentLine))
-                overlayView.lines.append(currentLine)
-                overlayView.currentLine = nil
-            }
-        case .highlighter:
-            if var currentHighlight = overlayView.endFreehandStroke(tool: .highlighter) {
-                let finalTime = event.timestamp
-                guard let minTimestamp = currentHighlight.points.first?.timestamp else {
-                    return
-                }
-                let offset = finalTime - minTimestamp
-                for i in currentHighlight.points.indices {
-                    currentHighlight.points[i].timestamp += offset
-                }
-                overlayView.registerUndo(action: .addHighlight(currentHighlight))
-                overlayView.highlightPaths.append(currentHighlight)
-            }
-        case .rectangle:
-            if var currentRectangle = overlayView.currentRectangle {
-                currentRectangle.creationTime = CACurrentMediaTime()
-                overlayView.registerUndo(action: .addRectangle(currentRectangle))
-                overlayView.rectangles.append(currentRectangle)
-                overlayView.currentRectangle = nil
-            }
-        case .circle:
-            if var currentCircle = overlayView.currentCircle {
-                currentCircle.creationTime = CACurrentMediaTime()
-                overlayView.registerUndo(action: .addCircle(currentCircle))
-                overlayView.circles.append(currentCircle)
-                overlayView.currentCircle = nil
-            }
-        case .text:
-            break
-        case .counter:
-            break
-        case .select:
-            break
-        case .eraser:
-            break
-        }
         overlayView.needsDisplay = true
         wasOptionPressedOnMouseDown = false
         isCenterModeActive = false
         wasShiftPressedOnMouseDown = false
         isShiftConstraintActive = false
-
-        if overlayView.fadeMode {
-            startFadeLoop()
-        }
     }
 
     override func keyDown(with event: NSEvent) {
+        if handleQuickPickerKeyDown(event) {
+            return
+        }
+
+        if handleOverlayShortcut(event) { return }
+        // The field editor already handles typing before it reaches the window.
+        // Do not let an unhandled editing key reach another window's shortcuts.
+        guard !isEditingAnnotationText else { return }
         let cmdPressed = event.modifierFlags.contains(.command)
         let key = event.characters?.lowercased() ?? ""
         if event.keyCode == 53 {
             restoreMouseCoalescing()
+            cancelFreehandStroke()
         }
 
-        if event.modifierFlags.contains(.option),
-            event.charactersIgnoringModifiers?.lowercased() == "h"
-        {
-            AppDelegate.shared?.toggleHelpBar()
-            return
-        }
-        
-        // Handle single-key shortcuts if no modifiers are pressed
-        if !cmdPressed
-            && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
-        {
-            switch key {
-            case ShortcutManager.shared.getShortcut(for: .pen):
-                AppDelegate.shared?.enablePenMode(NSMenuItem())
+        // Letter shortcuts follow the active keyboard layout, not QWERTY key positions.
+        // Match on `characters` only. With Command held, `characters` carries the layout's
+        // Command layer (QWERTY letters on Dvorak - QWERTY ⌘, Latin letters on Russian, Greek
+        // and Hebrew) and falls back to the base letter on layouts with no Command layer, so it
+        // is correct everywhere. `charactersIgnoringModifiers` reports the base layer instead:
+        // it misses those layouts and aliases unrelated chords, for example on Dvorak - QWERTY ⌘
+        // the base letter behind Cmd+, is "w", so Cmd+, would close the overlay.
+        if cmdPressed {
+            if key == "w" {
+                AppDelegate.shared?.closeOverlay()
                 return
-            case ShortcutManager.shared.getShortcut(for: .arrow):
-                AppDelegate.shared?.enableArrowMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .line):
-                AppDelegate.shared?.enableLineMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .highlighter):
-                AppDelegate.shared?.enableHighlighterMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .rectangle):
-                AppDelegate.shared?.enableRectangleMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .circle):
-                AppDelegate.shared?.enableCircleMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .counter):
-                AppDelegate.shared?.enableCounterMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .text):
-                AppDelegate.shared?.enableTextMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .select):
-                AppDelegate.shared?.enableSelectMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .eraser):
-                AppDelegate.shared?.enableEraserMode(NSMenuItem())
-                return
-            case ShortcutManager.shared.getShortcut(for: .colorPicker):
-                if !event.isARepeat { beginQuickPicker(.color) }
-                return
-            case ShortcutManager.shared.getShortcut(for: .lineWidthPicker):
-                if !event.isARepeat { beginQuickPicker(.width) }
-                return
-            case ShortcutManager.shared.getShortcut(for: .toggleBoard):
-                AppDelegate.shared?.toggleBoardVisibility(nil)
-                return
-            case ShortcutManager.shared.getShortcut(for: .toggleClickEffects):
-                AppDelegate.shared?.toggleClickEffects(nil)
-                return
-            case ShortcutManager.shared.getShortcut(for: .toggleShapeFill):
-                toggleShapeFill()
-                return
-            case "[":
-                stepStrokeLevel(-1)
-                return
-            case "]":
-                stepStrokeLevel(1)
-                return
-            default:
-                break
             }
-        }
-
-        if quickPicker != nil && event.keyCode == 53 {
-            cancelQuickPicker()
-            return
+            if key == "z" {
+                if event.modifierFlags.contains(.shift) {
+                    overlayView.redo()
+                } else {
+                    overlayView.undo()
+                }
+                return
+            }
+            if key == "r", !event.modifierFlags.contains(.shift),
+                !event.modifierFlags.contains(.option), overlayView.currentTool == .counter
+            {
+                overlayView.resetCounter()
+                showToggleFeedback("Counter Reset", icon: "🔄")
+                return
+            }
         }
 
         switch event.keyCode {
@@ -994,38 +1590,9 @@ class OverlayWindow: NSPanel {
             } else {
                 AppDelegate.shared?.toggleOverlay()
             }
-        case 51:  // Delete/Backspace key
-            if event.modifierFlags.contains(.option) {
-                overlayView.clearAll()
-            } else {
+        case 51, 117:  // Delete/Backspace and Forward Delete
+            if !event.modifierFlags.contains(.option) {
                 overlayView.deleteLastItem()
-            }
-        case 117:  // Forward Delete key (fn+delete)
-            if event.modifierFlags.contains(.option) {
-                overlayView.clearAll()
-            } else {
-                overlayView.deleteLastItem()
-            }
-        case 49:  // Spacebar - toggle drawing mode
-            AppDelegate.shared?.toggleFadeMode(NSMenuItem())
-        case 13:  // 'w' key
-            if cmdPressed { AppDelegate.shared?.closeOverlay() }
-        case 6:  // 'z' key
-            if cmdPressed {
-                if event.modifierFlags.contains(.shift) {
-                    overlayView.redo()
-                } else {
-                    overlayView.undo()
-                }
-            }
-        case 15:  // 'r' key
-            if cmdPressed
-                && !event.modifierFlags.contains(.shift)
-                && !event.modifierFlags.contains(.option)
-                && overlayView.currentTool == .counter
-            {
-                overlayView.resetCounter()
-                showToggleFeedback("Counter Reset", icon: "🔄")
             }
         default:
             super.keyDown(with: event)
@@ -1179,17 +1746,16 @@ class OverlayWindow: NSPanel {
         }
     }
     
-    // Support for mouse backward/forward buttons (typically buttons 3 and 4)
     override func otherMouseDown(with event: NSEvent) {
-        // Button numbers:
-        // 2 = middle mouse button
-        // 3 = backward button (typically)
-        // 4 = forward button (typically)
-        
+        if quickPicker != nil {
+            cancelQuickPicker()
+            return
+        }
+
         switch event.buttonNumber {
-        case 3:  // Backward button - Undo
+        case 3:
             overlayView.undo()
-        case 4:  // Forward button - Redo
+        case 4:
             overlayView.redo()
         default:
             super.otherMouseDown(with: event)
@@ -1197,167 +1763,173 @@ class OverlayWindow: NSPanel {
     }
     
     private func scrollWheelForLineWidth(with event: NSEvent) {
-        // Adjust line width with Command + Scroll
-        let minLineWidth: CGFloat = 0.5
-        let maxLineWidth: CGFloat = 20.0
-        let ratio: CGFloat = 0.25
-        
-        // Get scroll delta (negative means scroll up, positive means scroll down)
         let scrollDelta = event.scrollingDeltaY
-        
-        // Determine direction and amount
+        guard scrollDelta != 0 else { return }
+
+        let ratio: CGFloat = 0.25
         let increment: CGFloat = scrollDelta > 0 ? ratio : -ratio
-        
-        // Get current line width
-        let currentWidth = overlayView.currentLineWidth
-        
-        // Calculate new width
-        var newWidth = currentWidth + increment
-        
-        // Round to nearest ratio increment
-        newWidth = round(newWidth / ratio) * ratio
-        
-        // Clamp to min/max
-        newWidth = max(minLineWidth, min(maxLineWidth, newWidth))
-        
-        // Only update if value changed
-        if newWidth != currentWidth {
-            // Update the line width globally
-            overlayView.currentLineWidth = newWidth
-            
-            // Save to UserDefaults
-            UserDefaults.standard.set(Double(newWidth), forKey: UserDefaults.lineWidthKey)
-            
-            // Apply to all overlay windows
-            AppDelegate.shared?.overlayWindows.values.forEach { window in
-                window.overlayView.currentLineWidth = newWidth
-            }
-            
-            // Show visual feedback
-            showLineWidthFeedback(newWidth)
+        let newWidth =
+            (round((overlayView.currentLineWidth + increment) / ratio) * ratio)
+            .clamped(to: lineWidthRange)
+        applyLineWidth(newWidth)
+    }
+
+    func applyLineWidth(_ width: CGFloat, showsFeedback: Bool = true) {
+        guard width != overlayView.currentLineWidth else { return }
+        pickerUserDefaults.set(Double(width), forKey: UserDefaults.lineWidthKey)
+        runtimeOverlayWindows.forEach { $0.overlayView.currentLineWidth = width }
+        if showsFeedback {
+            showLineWidthFeedback(width)
         }
     }
-    
+
     private func showLineWidthFeedback(_ width: CGFloat) {
         let text = String(format: "Line Width: %.2f px", width)
         showFeedback(text, lineColor: overlayView.currentColor, lineWidth: width)
     }
-    
+
     private func scrollWheelForFontSize(with event: NSEvent) {
         let scrollDelta = event.scrollingDeltaY
         guard scrollDelta != 0 else { return }
 
         let increment: CGFloat = scrollDelta > 0 ? 1 : -1
-        applyTextFontSize(UserDefaults.standard.textToolFontSize + increment)
+        let size =
+            (pickerUserDefaults.textToolFontSize + increment)
+            .clamped(to: textAnnotationFontSizeRange)
+        applyTextFontSize(size)
     }
 
-    func applyTextFontSize(_ newSize: CGFloat) {
-        let clamped = newSize.clamped(to: textAnnotationFontSizeRange)
-        guard clamped != UserDefaults.standard.textToolFontSize else { return }
+    func applyTextFontSize(_ requestedSize: CGFloat, showsFeedback: Bool = true) {
+        let size = requestedSize.clamped(to: textAnnotationFontSizeRange)
+        guard size != pickerUserDefaults.textToolFontSize
+            || runtimeOverlayWindows.contains(where: {
+                $0.overlayView.activeTextField != nil
+                    && $0.overlayView.currentTextAnnotation?.fontSize != size
+            })
+        else { return }
+        pickerUserDefaults.textToolFontSize = size
 
-        UserDefaults.standard.textToolFontSize = clamped
-
-        if let textField = overlayView.activeTextField {
-            textField.font = NSFont.systemFont(ofSize: clamped)
-            overlayView.currentTextAnnotation?.fontSize = clamped
-            overlayView.resizeActiveTextField(textField)
-            textField.needsDisplay = true
+        runtimeOverlayWindows.forEach { window in
+            if let textField = window.overlayView.activeTextField {
+                textField.font = NSFont.systemFont(ofSize: size)
+                window.overlayView.currentTextAnnotation?.fontSize = size
+                window.overlayView.resizeActiveTextField(textField)
+                textField.needsDisplay = true
+            }
+            window.overlayView.needsDisplay = true
         }
 
-        showFontSizeFeedback(clamped)
+        if showsFeedback {
+            showFontSizeFeedback(size)
+        }
+    }
+
+    func stepTextFontSize(_ direction: Int) {
+        let currentSize =
+            overlayView.currentTextAnnotation?.fontSize ?? pickerUserDefaults.textToolFontSize
+        applyTextFontSize(
+            QuickPickerView.steppedValue(
+                in: QuickPickerView.fontSizeOptions,
+                current: currentSize,
+                direction: direction))
     }
 
     /// One switch for every overlay: new rectangles and circles are filled while it is on.
     func toggleShapeFill() {
         let enabled = !overlayView.shapeFill
-        UserDefaults.standard.set(enabled, forKey: UserDefaults.shapeFillKey)
-        overlayView.shapeFill = enabled
-        AppDelegate.shared?.overlayWindows.values.forEach { $0.overlayView.shapeFill = enabled }
+        pickerUserDefaults.set(enabled, forKey: UserDefaults.shapeFillKey)
+        runtimeOverlayWindows.forEach { $0.overlayView.shapeFill = enabled }
         showFeedback(enabled ? "Shapes: Filled" : "Shapes: Outline")
     }
 
     func toggleTextBackground() {
         let enabled = !(overlayView.currentTextAnnotation?.hasBackground
-            ?? UserDefaults.standard.textBackgroundEnabled)
-        overlayView.currentTextAnnotation?.hasBackground = enabled
-        UserDefaults.standard.textBackgroundEnabled = enabled
-        overlayView.syncTextOptions()
-        showFeedback(enabled ? "Label Background On" : "Label Background Off")
+            ?? pickerUserDefaults.textBackgroundEnabled)
+        pickerUserDefaults.textBackgroundEnabled = enabled
+
+        runtimeOverlayWindows.forEach { window in
+            window.overlayView.currentTextAnnotation?.hasBackground = enabled
+            window.overlayView.syncTextOptions()
+            window.overlayView.needsDisplay = true
+        }
+
+        showFeedback(enabled ? "Label background on" : "Label background off")
     }
 
     func flipTextBackgroundTone() {
         let dark = !(overlayView.currentTextAnnotation?.backgroundIsDark
-            ?? UserDefaults.standard.textBackgroundDark)
-        overlayView.currentTextAnnotation?.backgroundIsDark = dark
-        UserDefaults.standard.textBackgroundDark = dark
-        overlayView.syncTextOptions()
-        showFeedback(dark ? "Label Background: Black" : "Label Background: White")
-    }
+            ?? pickerUserDefaults.textBackgroundDark)
+        pickerUserDefaults.textBackgroundDark = dark
 
-    func applyLineWidth(_ width: CGFloat) {
-        guard width != overlayView.currentLineWidth else { return }
-        UserDefaults.standard.set(Double(width), forKey: UserDefaults.lineWidthKey)
-        AppDelegate.shared?.overlayWindows.values.forEach {
-            $0.overlayView.currentLineWidth = width
-        }
-        showFeedback(
-            String(format: "%.0f px", width),
-            lineColor: overlayView.currentColor,
-            lineWidth: width)
-    }
-
-    private func stepStrokeLevel(_ direction: Int) {
-        if overlayView.currentTool == .text {
-            let options = QuickPickerView.fontSizeOptions
-            let index = nearestIndex(in: options, to: UserDefaults.standard.textToolFontSize)
-            applyTextFontSize(options[(index + direction).clamped(to: 0...(options.count - 1))])
-            return
+        runtimeOverlayWindows.forEach { window in
+            window.overlayView.currentTextAnnotation?.backgroundIsDark = dark
+            window.overlayView.syncTextOptions()
+            window.overlayView.needsDisplay = true
         }
 
-        let options = QuickPickerView.widthOptions
-        let index = nearestIndex(in: options, to: overlayView.currentLineWidth)
-        applyLineWidth(options[(index + direction).clamped(to: 0...(options.count - 1))])
-    }
-
-    private func nearestIndex(in options: [CGFloat], to value: CGFloat) -> Int {
-        var best = 0
-        var bestDistance = CGFloat.greatestFiniteMagnitude
-        for (index, option) in options.enumerated() {
-            let distance = abs(option - value)
-            if distance < bestDistance {
-                bestDistance = distance
-                best = index
-            }
-        }
-        return best
+        showFeedback(dark ? "Label background black" : "Label background white")
     }
 
     private func showFontSizeFeedback(_ size: CGFloat) {
-        let text = String(format: "Font Size: %.0f pt", size)
-        showFeedback(text)
+        showFeedback(String(format: "Font Size: %.0f pt", size))
     }
 
     private func scrollWheelForCounterSize(with event: NSEvent) {
         let scrollDelta = event.scrollingDeltaY
         guard scrollDelta != 0 else { return }
 
-        let step: CGFloat = 1.0
-        let increment: CGFloat = scrollDelta > 0 ? step : -step
-        let currentSize = UserDefaults.standard.counterToolFontSize
-        let newSize = (currentSize + increment).clamped(to: counterFontSizeRange)
+        let increment: CGFloat = scrollDelta > 0 ? 1 : -1
+        let size =
+            (pickerUserDefaults.counterToolFontSize + increment)
+            .clamped(to: counterFontSizeRange)
+        applyCounterFontSize(size)
+    }
 
-        guard newSize != currentSize else { return }
-
-        UserDefaults.standard.counterToolFontSize = newSize
-
-        showCounterSizeFeedback(newSize)
+    func applyCounterFontSize(_ size: CGFloat, showsFeedback: Bool = true) {
+        guard size != pickerUserDefaults.counterToolFontSize else { return }
+        pickerUserDefaults.counterToolFontSize = size
+        runtimeOverlayWindows.forEach { $0.overlayView.needsDisplay = true }
+        if showsFeedback {
+            showCounterSizeFeedback(size)
+        }
     }
 
     private func showCounterSizeFeedback(_ size: CGFloat) {
-        let text = String(format: "Counter Size: %.0f pt", size)
-        showFeedback(text)
+        showFeedback(String(format: "Counter Size: %.0f pt", size))
+    }
+
+    private func stepActiveLadder(_ direction: Int) {
+        if overlayView.currentTool == .text || overlayView.activeTextField != nil {
+            stepTextFontSize(direction)
+            return
+        }
+
+        if overlayView.currentTool == .counter {
+            applyCounterFontSize(
+                QuickPickerView.steppedValue(
+                    in: QuickPickerView.counterSizeOptions,
+                    current: pickerUserDefaults.counterToolFontSize,
+                    direction: direction))
+            return
+        }
+
+        applyLineWidth(
+            QuickPickerView.steppedValue(
+                in: QuickPickerView.widthOptions,
+                current: overlayView.currentLineWidth,
+                direction: direction))
     }
     
+    private func toggleBackgroundDimming(with event: NSEvent) {
+        guard !event.isARepeat else { return }
+        let manager = CursorHighlightManager.shared
+        manager.toggleSpotlightDimming()
+        showToggleFeedback(
+            manager.spotlightDimmingEnabled ? "Dimming On" : "Dimming Off",
+            icon: manager.spotlightDimmingEnabled ? "🌘" : "☀️"
+        )
+    }
+
     func showToggleFeedback(_ text: String, icon: String) {
         let hideToolFeedback = UserDefaults.standard.bool(forKey: UserDefaults.hideToolFeedbackKey)
         guard !hideToolFeedback else { return }
@@ -1374,8 +1946,8 @@ class OverlayWindow: NSPanel {
 
         switch tool {
         case .pen:
-            toolName = "Brush"
-            icon = "🖌️"
+            toolName = "Pen"
+            icon = "✒️"
         case .arrow:
             toolName = "Arrow"
             icon = "➡️"
@@ -1391,6 +1963,9 @@ class OverlayWindow: NSPanel {
         case .circle:
             toolName = "Circle"
             icon = "⭕"
+        case .redact:
+            toolName = "Redact"
+            icon = "🕶️"
         case .counter:
             toolName = "Counter"
             icon = "🔢"
@@ -1412,7 +1987,7 @@ class OverlayWindow: NSPanel {
             let widthText = String(format: "%.2f px", currentWidth)
             let text = "\(icon) \(toolName) • \(widthText)"
             showFeedback(text, lineColor: overlayView.currentColor, lineWidth: currentWidth)
-        case .counter, .text, .select, .eraser:
+        case .redact, .counter, .text, .select, .eraser:
             let text = "\(icon) \(toolName)"
             showFeedback(text, lineColor: overlayView.currentColor)
         }
@@ -1514,7 +2089,7 @@ class OverlayWindow: NSPanel {
         height: CGFloat,
         lineWidth: CGFloat?
     ) -> NSRect {
-        let bottomPadding: CGFloat = helpBarClearance > 0 ? helpBarClearance + 8 : 20
+        let bottomPadding = feedbackBottomPadding
         let extraLinePadding = lineWidth != nil ? max(0, lineWidth! / 2) : 0
         
         return NSRect(
@@ -1630,6 +2205,7 @@ class OverlayWindow: NSPanel {
     // MARK: - Keyboard Commands for Copy/Paste/Cut/Duplicate
     
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if handleQuickPickerKeyDown(event) || handleOverlayShortcut(event) { return true }
         // Check for Command key combinations
         guard event.modifierFlags.contains(.command) else {
             return super.performKeyEquivalent(with: event)
@@ -1683,7 +2259,21 @@ class OverlayWindow: NSPanel {
             }
             overlayView.duplicateSelectedObjects()
             return true
-            
+
+        case "b":
+            // Command-B toggles the label background whenever the text tool is in play,
+            // with or without an active field. Bare "b" stays Toggle Board; that path runs
+            // in keyDown and only fires when no modifier is held.
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard modifiers.isDisjoint(with: [.option, .control]),
+                overlayView.currentTool == .text || overlayView.activeTextField != nil
+            else {
+                return super.performKeyEquivalent(with: event)
+            }
+            toggleTextBackground()
+            return true
+
+
         default:
             return super.performKeyEquivalent(with: event)
         }

@@ -8,6 +8,7 @@ enum ToolType: String, CaseIterable {
     case highlighter
     case rectangle
     case circle
+    case redact
     case text
     case counter
     case select
@@ -21,6 +22,7 @@ enum ToolType: String, CaseIterable {
         case .line: return "Line"
         case .rectangle: return "Rectangle"
         case .circle: return "Circle"
+        case .redact: return "Redact"
         case .text: return "Text"
         case .counter: return "Counter"
         case .eraser: return "Eraser"
@@ -28,15 +30,50 @@ enum ToolType: String, CaseIterable {
         }
     }
 
-    /// Nominal-to-rendered stroke width ratio (ADR-0002): the single owner of how a
-    /// tool fattens its stroke. Renderer, cursor previews, and dirty-rect padding all
-    /// derive from this — never a second inline constant.
+    /// The shortcut entry that selects this tool. Exhaustive so a new case cannot
+    /// silently miss the overlay toolbar or the shortcut settings.
+    var shortcutKey: ShortcutKey {
+        switch self {
+        case .pen: return .pen
+        case .arrow: return .arrow
+        case .line: return .line
+        case .highlighter: return .highlighter
+        case .rectangle: return .rectangle
+        case .circle: return .circle
+        case .redact: return .redact
+        case .text: return .text
+        case .counter: return .counter
+        case .select: return .select
+        case .eraser: return .eraser
+        }
+    }
+
+    /// SF Symbol shown for this tool on the overlay toolbar.
+    var symbolName: String {
+        switch self {
+        case .pen: return "pencil"
+        case .arrow: return "arrow.up.right"
+        case .line: return "line.diagonal"
+        case .highlighter: return "highlighter"
+        case .rectangle: return "rectangle"
+        case .circle: return "circle"
+        case .redact: return "eye.slash"
+        case .text: return "textformat"
+        case .counter: return "number"
+        case .select: return "cursorarrow"
+        case .eraser: return "eraser"
+        }
+    }
+
+    /// Rendered width per nominal point, keeping the highlighter's 14/3 ratio.
+    /// Rendering, dirty-rect padding, selection and eraser hit-testing all read this,
+    /// so the value must not be re-inlined at a call site.
     var strokeWidthMultiplier: CGFloat {
         self == .highlighter ? 4.67 : 1
     }
 
-    /// Ink opacity the tool actually lays down (ADR-0002): every color preview
-    /// (renderer, cursor ink dot, pickers) derives from this — never a second inline constant.
+    /// Alpha ink is laid down at, applied at render time so the stored color is
+    /// whatever the user picked. Same single-authority rule as the multiplier.
     var laydownAlpha: CGFloat {
         self == .highlighter ? 0.5 : 1
     }
@@ -105,6 +142,29 @@ struct DrawingPath {
     var points: [TimedPoint]
     var color: NSColor
     var lineWidth: CGFloat
+    var bezierPath: NSBezierPath? = nil
+    var cachedBounds: NSRect = .null
+    /// When the stroke was committed. Point timestamps cannot stand in for it: they are
+    /// rebased to start at mouseUp and fading drops the oldest ones, so they drift later.
+    var creationTime: CFTimeInterval? = nil
+
+    mutating func recacheBounds() {
+        cachedBounds = DrawingPath.bounds(of: points)
+    }
+
+    mutating func expandCachedBounds(with point: NSPoint) {
+        let pointRect = NSRect(origin: point, size: .zero)
+        cachedBounds = cachedBounds.isNull ? pointRect : cachedBounds.union(pointRect)
+    }
+
+    static func bounds(of points: [TimedPoint]) -> NSRect {
+        guard let first = points.first else { return .null }
+        var bounds = NSRect(origin: first.point, size: .zero)
+        for timedPoint in points.dropFirst() {
+            bounds = bounds.union(NSRect(origin: timedPoint.point, size: .zero))
+        }
+        return bounds
+    }
 }
 
 /// Represents an arrow annotation with start and end points.
@@ -125,6 +185,24 @@ struct Line {
     var creationTime: CFTimeInterval?
 }
 
+/// How a rectangle annotation is filled. `.outline` is the plain Rectangle tool; the
+/// other three are the Redact tool's styles and hide whatever sits under the rectangle.
+enum RectangleStyle: String, CaseIterable {
+    case outline
+    case solid
+    case pixelate
+    case blur
+
+    var displayName: String {
+        switch self {
+        case .outline: return "Outline"
+        case .solid: return "Solid"
+        case .pixelate: return "Pixelate"
+        case .blur: return "Blur"
+        }
+    }
+}
+
 /// Represents a rectangle annotation defined by two corner points.
 struct Rectangle {
     var startPoint: NSPoint
@@ -133,6 +211,28 @@ struct Rectangle {
     var lineWidth: CGFloat
     var isFilled: Bool = false
     var creationTime: CFTimeInterval?
+    var style: RectangleStyle = .outline
+    /// Filtered screen pixels for `.pixelate` and `.blur`. Updated live while the rectangle
+    /// is drawn or moved; whenever its key no longer matches the rectangle, it is retaken.
+    /// Deliberately not part of `==`: the same annotation with or without its sample is
+    /// the same annotation for undo, selection and clipboard purposes.
+    var sample: RedactionSample? = nil
+
+    /// Whether this rectangle hides content instead of outlining it.
+    var isRedaction: Bool { style != .outline }
+
+    /// Whether this rectangle needs captured screen pixels to render its style.
+    var needsSample: Bool { style == .pixelate || style == .blur }
+
+    /// The normalized bounds spanned by the two corner points.
+    var bounds: NSRect {
+        NSRect(
+            x: min(startPoint.x, endPoint.x),
+            y: min(startPoint.y, endPoint.y),
+            width: abs(endPoint.x - startPoint.x),
+            height: abs(endPoint.y - startPoint.y)
+        )
+    }
 }
 
 /// Represents a circular annotation defined by two corner points of its bounding box.
@@ -153,6 +253,40 @@ struct TextAnnotation {
     var fontSize: CGFloat
     var hasBackground: Bool = false
     var backgroundIsDark: Bool = true
+    var creationTime: CFTimeInterval?
+
+    /// Padding between the text and the edge of the background pill.
+    static var pillInsets: NSEdgeInsets { NSEdgeInsets(top: 4, left: 8, bottom: 4, right: 8) }
+
+    /// Corner radius of the background pill.
+    static let pillCornerRadius: CGFloat = 6
+
+    /// Opacity of the pill fill before any fade alpha is applied.
+    static let pillFillAlpha: CGFloat = 0.85
+
+    /// Bounds of the label for an already measured text size.
+    ///
+    /// With a background the insets are the pill's own padding, so the rect matches
+    /// exactly what gets drawn. Without one the caller supplies its own slop, which
+    /// keeps hit testing as forgiving as it was before pills existed.
+    func bounds(textSize: NSSize, fallbackInsets: NSEdgeInsets) -> NSRect {
+        let insets = hasBackground ? Self.pillInsets : fallbackInsets
+        return NSRect(
+            x: position.x - insets.left,
+            y: position.y - insets.bottom,
+            width: textSize.width + insets.left + insets.right,
+            height: textSize.height + insets.top + insets.bottom
+        )
+    }
+
+    /// Bounds of the label, measuring the text with the annotation's own font.
+    func bounds(fallbackInsets: NSEdgeInsets) -> NSRect {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: fontSize)
+        ]
+        return bounds(
+            textSize: text.size(withAttributes: attributes), fallbackInsets: fallbackInsets)
+    }
 }
 
 struct CounterAnnotation {
@@ -186,6 +320,19 @@ enum ClipboardItem {
     case circle(Circle)
     case text(TextAnnotation)
     case counter(CounterAnnotation)
+
+    /// The copied object's creation time, which decides its layer against redactions.
+    var creationTime: CFTimeInterval? {
+        switch self {
+        case .arrow(let arrow): return arrow.creationTime
+        case .line(let line): return line.creationTime
+        case .path(let path), .highlight(let path): return path.creationTime
+        case .rectangle(let rectangle): return rectangle.creationTime
+        case .circle(let circle): return circle.creationTime
+        case .text(let text): return text.creationTime
+        case .counter(let counter): return counter.creationTime
+        }
+    }
 }
 
 /// Describes actions that can be used for undo/redo operations.
@@ -237,6 +384,7 @@ extension TimedPoint: Equatable {
 extension DrawingPath: Equatable {
     public static func == (lhs: DrawingPath, rhs: DrawingPath) -> Bool {
         return lhs.points == rhs.points && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth
+            && lhs.creationTime == rhs.creationTime
     }
 }
 
@@ -258,7 +406,7 @@ extension Rectangle: Equatable {
     public static func == (lhs: Rectangle, rhs: Rectangle) -> Bool {
         return lhs.startPoint == rhs.startPoint && lhs.endPoint == rhs.endPoint
             && lhs.color.isEqual(rhs.color) && lhs.lineWidth == rhs.lineWidth && lhs.isFilled == rhs.isFilled
-            && lhs.creationTime == rhs.creationTime
+            && lhs.creationTime == rhs.creationTime && lhs.style == rhs.style
     }
 }
 
@@ -275,6 +423,7 @@ extension TextAnnotation: Equatable {
         return lhs.text == rhs.text && lhs.position == rhs.position && lhs.color.isEqual(rhs.color)
             && lhs.fontSize == rhs.fontSize && lhs.hasBackground == rhs.hasBackground
             && lhs.backgroundIsDark == rhs.backgroundIsDark
+            && lhs.creationTime == rhs.creationTime
     }
 }
 

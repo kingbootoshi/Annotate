@@ -1,0 +1,476 @@
+import Cocoa
+import SwiftUI
+
+/// The floating toolbar lives in its own non-activating child panel of the overlay window.
+/// A panel is what makes the bar draggable without any hand-rolled hit testing: AppKit moves
+/// it for us through `isMovableByWindowBackground`. It never becomes key, so every keystroke
+/// keeps going to the canvas, and it rides along with the overlay because a child window
+/// follows its parent's ordering and its moves.
+final class ToolbarPanel: NSPanel {
+    /// Margin kept between the bar and the overlay edges, and the bar's default lift off the
+    /// bottom. 20 pt is the resting place the bar has always had.
+    static let edgeInset: CGFloat = 20
+    /// Gap left between the bar and the quick picker when the two would otherwise overlap.
+    static let pickerGap: CGFloat = 8
+
+    private let model: ToolbarModel
+    private let host: ToolbarHostingView
+    /// Plain AppKit carrier. `NSHostingView` as the panel's `contentView` special-cases
+    /// `contentMinSize` / `setContentSize` from SwiftUI, which kept snapping the live
+    /// window to the stacked 564×90 layout after attach. This view does not.
+    private let chrome = NSView()
+    /// Last size `fitToContent` chose, applied to the live host after attach.
+    private var lockedContentSize: NSSize?
+    private var isApplyingHostLayout = false
+    /// The overlay this bar belongs to. Weak because the overlay owns the panel, not the reverse.
+    private weak var overlay: OverlayWindow?
+    /// True while the app, rather than the user, is moving the bar. Only a drag the user made
+    /// is worth persisting, and the window server rounds a placed frame to whole points, so
+    /// comparing frames afterwards is not a reliable way to tell the two apart.
+    private var isPlacingProgrammatically = false
+    /// The bar's offset from the overlay origin after the last placement. AppKit carries a
+    /// child window along when its parent moves, preserving the offset, so a reported move that
+    /// still matches this one is the overlay shifting rather than the user dragging the bar.
+    private var lastKnownOffset: NSPoint?
+    /// True between the mouse-down on the bar and the matching mouse-up. A drag reports a move
+    /// per frame, so the writes are held back and folded into one at the end of the gesture.
+    private var isUserDragging = false
+    /// A move seen during a drag that still has to be written down when the drag ends.
+    private var hasPendingSave = false
+    /// Tells a chip click from a drag of the bar. Shared with the SwiftUI action closure so a
+    /// Button mouse-up that lands after the bar has moved can still be refused.
+    private let press: ToolbarPress
+    private let deliverAction: (ToolbarAction) -> Void
+
+    init(overlay: OverlayWindow, model: ToolbarModel, perform: @escaping (ToolbarAction) -> Void) {
+        self.overlay = overlay
+        self.model = model
+        let press = ToolbarPress()
+        self.press = press
+        let deliverAction: (ToolbarAction) -> Void = { action in
+            press.deliver { perform(action) }
+        }
+        self.deliverAction = deliverAction
+        host = ToolbarHostingView(rootView: ToolbarView(model: model, perform: deliverAction))
+
+        super.init(
+            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        host.sizingOptions = []
+        host.safeAreaRegions = []
+        host.translatesAutoresizingMaskIntoConstraints = true
+        host.autoresizingMask = [.width, .height]
+
+        // The SwiftUI segments paint their own glass and shadow, so the panel itself is a
+        // transparent, shadowless carrier.
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = false
+        isMovableByWindowBackground = true
+        hidesOnDeactivate = false
+        isRestorable = false
+        isReleasedWhenClosed = false
+        // Match the overlay so the bar sits with it above everything and joins every Space.
+        level = overlay.level
+        collectionBehavior = overlay.collectionBehavior
+
+        chrome.autoresizesSubviews = true
+        contentView = chrome
+        contentMinSize = .zero
+        contentMaxSize = NSSize(width: 10_000, height: 10_000)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(panelDidMove),
+            name: NSWindow.didMoveNotification,
+            object: self
+        )
+    }
+
+    /// The SwiftUI bar. Not the panel's `contentView`; that is a plain AppKit carrier so
+    /// `NSHostingView` cannot resize the window around a stacked `ViewThatFits` choice.
+    var hostingView: ToolbarHostingView { host }
+
+    override var canBecomeKey: Bool { false }
+
+    override var canBecomeMain: Bool { false }
+
+    /// Marks the whole press as a user gesture, whichever way AppKit ends up moving the bar.
+    /// `isMovableByWindowBackground` can swallow the press before `mouseDown` ever runs, and a
+    /// native move like that reports a move per frame of the drag, so the flag has to be set
+    /// here rather than in `mouseDown` alone or those frames would each be written down.
+    ///
+    /// Chip actions are judged here too. SwiftUI's `Button` fires on mouse-up if the pointer is
+    /// still inside the control; the bar travels with the pointer, so that test is always true
+    /// during a drag. Screen-space travel (and the bar's own origin, when AppKit swallows the
+    /// dragged events) is what actually tells a click from a drag.
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown:
+            isUserDragging = true
+            press.begin(screenPoint: screenPoint(for: event), windowOrigin: frame.origin)
+            super.sendEvent(event)
+        case .leftMouseDragged:
+            press.consider(screenPoint: screenPoint(for: event), windowOrigin: frame.origin)
+            super.sendEvent(event)
+        case .leftMouseUp:
+            press.consider(screenPoint: screenPoint(for: event), windowOrigin: frame.origin)
+            super.sendEvent(event)
+            endUserDrag()
+        default:
+            super.sendEvent(event)
+        }
+    }
+
+    /// A press the SwiftUI chips did not consume falls through to the window, which is the
+    /// signal that the user grabbed the bar itself. `isMovableByWindowBackground` covers this
+    /// on its own for real drags, but a nonactivating panel in an inactive app does not always
+    /// get that far, so start the drag explicitly.
+    override func mouseDown(with event: NSEvent) {
+        isUserDragging = true
+        performDrag(with: event)
+        // `performDrag` swallows dragged events, so judge the gesture against the bar's origin
+        // before closing it. Chip actions are refused while `press.isDrag` is still set.
+        press.consider(windowOrigin: frame.origin)
+        // `performDrag` may swallow the whole gesture, mouse-up included, in which case
+        // `sendEvent` never sees the end of it and this is the only place left to close it.
+        // The button being back up is what tells the two apart: if it is still down the drag
+        // is still running, so leave the gesture open for the mouse-up to close.
+        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+        endUserDrag()
+    }
+
+    /// Closes a user gesture and writes down the move it made, if it made one. A click that
+    /// moved nothing leaves the pending flag clear, so it never records a position the user
+    /// did not choose. Safe to call more than once for the same gesture.
+    private func endUserDrag() {
+        isUserDragging = false
+        press.end()
+        guard hasPendingSave else { return }
+        hasPendingSave = false
+        savePosition()
+    }
+
+    /// True between mouse-down and mouse-up once the press has moved far enough to count as a
+    /// drag rather than a chip click.
+    var isSuppressingChipAction: Bool { press.isDrag }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        convertToScreen(NSRect(origin: event.locationInWindow, size: .zero)).origin
+    }
+
+    // MARK: - Attachment
+
+    /// True while the bar is part of the overlay's window group, which is also the only state
+    /// in which it can be on screen.
+    var isAttached: Bool { parent != nil }
+
+    /// Joins the overlay's window group and puts the bar back where the user left it. A detached
+    /// bar is not carried along when the overlay moves or resizes, so its frame has gone stale by
+    /// the time it is shown again and has to be rebuilt from the saved offset.
+    func attach(to overlay: OverlayWindow) {
+        guard parent == nil else { return }
+        overlay.addChildWindow(self, ordered: .above)
+        fitToContent()
+        restoreSavedPosition()
+        // `addChildWindow` and `restoreSavedPosition` both run layout. The measurer
+        // already returned the one-row size; this is what actually gives that width
+        // to the live host so `ViewThatFits` can re-choose.
+        applyMeasuredSizeToLiveHost()
+    }
+
+    func detach() {
+        parent?.removeChildWindow(self)
+        orderOut(nil)
+    }
+
+    func tearDown() {
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didMoveNotification, object: self)
+        detach()
+        close()
+    }
+
+    // MARK: - Sizing and placement
+
+    /// Measures the SwiftUI bar and resizes the panel around its bottom center. Holding the
+    /// center rather than the origin keeps a centered bar centered when `ViewThatFits` swaps
+    /// between the one-row and stacked layouts.
+    func fitToContent() {
+        guard let overlay else { return }
+        // The width the bar may occupy. Proposing it is what lets `ViewThatFits` pick the
+        // stacked layout on a narrow display instead of clipping the one-row bar.
+        let available = max(0, overlay.frame.width - Self.edgeInset * 2)
+        let size = measuredSize(availableWidth: available)
+        guard size.width > 0, size.height > 0 else { return }
+
+        lockedContentSize = size
+
+        if size != frame.size {
+            let anchor = NSPoint(x: frame.midX, y: frame.minY)
+            place(NSRect(origin: NSPoint(x: anchor.x - size.width / 2, y: anchor.y), size: size))
+        }
+
+        // A detached panel's contentView may still be 1×1 even after `setFrame`.
+        // Mounting SwiftUI then makes `ViewThatFits` pick stacked, and that choice
+        // survived attach on real AppKit. Wait until the bar is a child window.
+        if isAttached {
+            applyMeasuredSizeToLiveHost()
+        }
+    }
+
+    /// Puts the displayed host at the measured size and remounts `ViewThatFits` against
+    /// that width. Called after attach (and after overlay resizes) because measurement
+    /// alone does not change the live panel — Mac tests saw 986×41 from the probe and
+    /// 564×90 on the attached window.
+    private func applyMeasuredSizeToLiveHost() {
+        guard !isApplyingHostLayout else { return }
+        guard let size = lockedContentSize, size.width > 0, size.height > 0 else { return }
+        isApplyingHostLayout = true
+        defer { isApplyingHostLayout = false }
+        if abs(frame.width - size.width) > 0.5 || abs(frame.height - size.height) > 0.5 {
+            place(NSRect(origin: frame.origin, size: size))
+        }
+        chrome.frame = NSRect(origin: .zero, size: size)
+        // Autoresizing against a still-stale chrome would crush a 986pt host back to
+        // the leftover stacked width. Set the frame first, then let it track.
+        host.autoresizingMask = []
+        host.frame = NSRect(origin: .zero, size: size)
+        if host.superview !== chrome {
+            chrome.addSubview(host)
+        }
+        host.autoresizingMask = [.width, .height]
+        // Assign a new root after the host has the measured width. Replacing the same
+        // `rootView` is a no-op, and bumping `layoutGeneration` before the frame change
+        // remounted `ViewThatFits` at the leftover stacked width (~660×90 on grow-back).
+        host.rootView = ToolbarView(model: model, perform: deliverAction)
+        model.layoutGeneration += 1
+        host.layoutSubtreeIfNeeded()
+    }
+
+    /// Asks the same probe `fitToContent` uses what the bar wants at `availableWidth`.
+    /// Exposed for tests so they can compare the attached panel to the production
+    /// measurement path rather than to a fresh off-window controller.
+    func measuredSize(availableWidth: CGFloat) -> CGSize {
+        // A finite height is required: `ViewThatFits` on some macOS versions treats an
+        // infinite vertical proposal as "the one-row child does not fit" and returns the
+        // stacked size even when the width is ample. 10_000pt is taller than any overlay
+        // the bar will see and matches the finite proposals the wrap tests already use.
+        let proposal = CGSize(width: availableWidth, height: 10_000)
+        // A reused controller keeps a stacked `ViewThatFits` choice from a previous
+        // tight overlay. Probe with a fresh tree so grow-back (700 → 1920) can return
+        // to one row. Do not put `maxWidth` on `ToolbarView`: `sizeThatFits` would
+        // then report the proposal (e.g. 1160) instead of the one-row ideal (~986),
+        // and restoring a saved x=140 would clamp to 40.
+        let probe = NSHostingController(rootView: ToolbarView(model: model) { _ in })
+        probe.sizingOptions = []
+        probe.safeAreaRegions = []
+        var size = probe.sizeThatFits(in: proposal)
+        size.width = min(max(0, size.width), availableWidth)
+        return size
+    }
+
+    /// Runs the overlay's own frame change, then refreshes the bar around it. AppKit already
+    /// carries a child window along with its parent, so only the width the bar may occupy and
+    /// the clamp against the new frame need redoing. The move is bracketed so the bar being
+    /// dragged along by its parent is never mistaken for the user parking it somewhere.
+    ///
+    /// A detached bar is not carried along, so its frame is a stale absolute position that is
+    /// worth neither clamping nor recording as an offset. It is still measured, because its size
+    /// has to be right before `attach` places it from the saved offset.
+    func aroundOverlayFrameChange(_ body: () -> Void) {
+        let wasPlacing = isPlacingProgrammatically
+        isPlacingProgrammatically = true
+        body()
+        isPlacingProgrammatically = wasPlacing
+
+        fitToContent()
+        guard isAttached else { return }
+        place(frame)
+        applyMeasuredSizeToLiveHost()
+    }
+
+    /// Puts the bar back where the user left it on this display, or at the default bottom
+    /// center when nothing valid is stored.
+    func restoreSavedPosition() {
+        guard let overlay else { return }
+        let origin: NSPoint
+        if let offset = Self.savedOffset(for: overlay) {
+            origin = NSPoint(x: overlay.frame.minX + offset.x, y: overlay.frame.minY + offset.y)
+        } else {
+            origin = NSPoint(
+                x: overlay.frame.midX - frame.width / 2,
+                y: overlay.frame.minY + Self.edgeInset
+            )
+        }
+        place(NSRect(origin: origin, size: frame.size))
+    }
+
+    /// Keeps the bar fully inside the overlay it belongs to. AppKit consults this while the
+    /// user drags a visible window; every programmatic placement runs it explicitly, because
+    /// an off-screen window is never constrained.
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        guard let bounds = overlay?.frame else {
+            return super.constrainFrameRect(frameRect, to: screen)
+        }
+        var rect = frameRect
+        // Pin to the leading/bottom edge when the bar is larger than the overlay, so a bar that
+        // cannot fit is clipped on the far side rather than dragged out of reach.
+        rect.origin.x = max(bounds.minX, min(rect.origin.x, bounds.maxX - rect.width))
+        rect.origin.y = max(bounds.minY, min(rect.origin.y, bounds.maxY - rect.height))
+        return rect
+    }
+
+    private func place(_ rect: NSRect) {
+        let wasPlacing = isPlacingProgrammatically
+        isPlacingProgrammatically = true
+        setFrame(constrainFrameRect(rect, to: nil), display: false)
+        isPlacingProgrammatically = wasPlacing
+        lastKnownOffset = currentOffset
+    }
+
+    private var currentOffset: NSPoint? {
+        guard let overlay else { return nil }
+        return NSPoint(x: frame.minX - overlay.frame.minX, y: frame.minY - overlay.frame.minY)
+    }
+
+    // MARK: - Persistence
+
+    /// A move made during a user gesture only notes that there is something to save, because
+    /// the end of the gesture writes it once rather than on every one of its 60-plus frames.
+    /// Both drag paths are covered: `sendEvent` sees the press whether AppKit moves the bar
+    /// itself or hands the drag to `mouseDown`. What is left to write immediately is a move
+    /// with no gesture behind it, which is code placing the bar somewhere the user should
+    /// find it again.
+    @objc private func panelDidMove() {
+        guard !isPlacingProgrammatically else { return }
+        guard let offset = currentOffset, offset != lastKnownOffset else { return }
+        lastKnownOffset = offset
+        if isUserDragging {
+            hasPendingSave = true
+            press.consider(windowOrigin: frame.origin)
+        } else {
+            savePosition()
+        }
+    }
+
+    /// Stores the bar's offset from the overlay origin, keyed by display. Absolute screen
+    /// coordinates would not survive a resolution change or a display being unplugged, and
+    /// `setFrameAutosaveName` would both store them and write to `UserDefaults.standard`
+    /// instead of the suite the app was given.
+    private func savePosition() {
+        guard let defaults = Self.defaults,
+            let overlay, let key = Self.displayKey(for: overlay)
+        else { return }
+        let offset = [
+            Double(frame.minX - overlay.frame.minX),
+            Double(frame.minY - overlay.frame.minY),
+        ]
+        var stored = defaults.dictionary(forKey: UserDefaults.toolbarPositionsKey) ?? [:]
+        guard stored[key] as? [Double] != offset else { return }
+        stored[key] = offset
+        defaults.set(stored, forKey: UserDefaults.toolbarPositionsKey)
+    }
+
+    /// The suite the app was given, and nothing when there is no app behind the bar. A bar
+    /// standing on its own (unit tests, previews) has no user whose position it could be
+    /// remembering, so it must neither read nor rewrite the developer's own standard suite:
+    /// falling back to it would let a real toolbar position leak into a test and would let a
+    /// test write one back out. Same reasoning as `OverlayView.commitTextField`, which only
+    /// broadcasts when the view belongs to a live overlay set.
+    private static var defaults: UserDefaults? {
+        AppDelegate.shared?.userDefaults
+    }
+
+    private static func savedOffset(for overlay: OverlayWindow) -> NSPoint? {
+        guard let defaults,
+            let key = displayKey(for: overlay),
+            let stored = defaults.dictionary(forKey: UserDefaults.toolbarPositionsKey)?[key]
+                as? [Double],
+            stored.count == 2,
+            stored.allSatisfy({ $0.isFinite })
+        else { return nil }
+        return NSPoint(x: stored[0], y: stored[1])
+    }
+
+    /// The display the overlay covers, as the stable number Core Graphics gives it. Read from
+    /// the overlay and never from the panel: a bar dragged against an edge can report the
+    /// neighboring display.
+    static func displayKey(for overlay: OverlayWindow) -> String? {
+        guard let screen = overlay.hostScreen,
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
+                as? NSNumber
+        else { return nil }
+        return number.stringValue
+    }
+}
+
+/// Distinguishes a chip click from a drag of the floating bar.
+///
+/// SwiftUI's `Button` fires on mouse-up when the pointer is still inside the control. The bar
+/// travels with the pointer, so that test is always true during a drag. The press has to be
+/// judged in screen space instead, and against the bar's own origin when AppKit swallows the
+/// dragged events (the `performDrag` fallback).
+final class ToolbarPress {
+    static let dragThreshold: CGFloat = 4
+
+    private var startScreenPoint: NSPoint?
+    private var startWindowOrigin: NSPoint?
+    private(set) var isDrag = false
+
+    func begin(screenPoint: NSPoint, windowOrigin: NSPoint) {
+        startScreenPoint = screenPoint
+        startWindowOrigin = windowOrigin
+        isDrag = false
+    }
+
+    func consider(screenPoint: NSPoint? = nil, windowOrigin: NSPoint? = nil) {
+        guard !isDrag else { return }
+        if let start = startScreenPoint, let point = screenPoint,
+            hypot(point.x - start.x, point.y - start.y) >= Self.dragThreshold
+        {
+            isDrag = true
+            return
+        }
+        if let start = startWindowOrigin, let origin = windowOrigin,
+            hypot(origin.x - start.x, origin.y - start.y) >= Self.dragThreshold
+        {
+            isDrag = true
+        }
+    }
+
+    func end() {
+        startScreenPoint = nil
+        startWindowOrigin = nil
+        isDrag = false
+    }
+
+    func deliver(_ body: () -> Void) {
+        guard !isDrag else { return }
+        body()
+    }
+}
+
+/// Hosts the SwiftUI bar. The panel is never key and the app is often inactive, so the first
+/// click has to land on a chip rather than being spent activating anything. This view is a
+/// subview of the panel, not its `contentView`, so it cannot rewrite the window size.
+final class ToolbarHostingView: NSHostingView<ToolbarView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    override func layout() {
+        sizingOptions = []
+        super.layout()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        sizingOptions = []
+    }
+}

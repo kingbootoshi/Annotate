@@ -44,6 +44,138 @@ final class CursorHighlightManagerTests: XCTestCase {
         XCTAssertFalse(persistedValue, "cursorHighlightEnabled should be persisted to UserDefaults as false")
     }
 
+    // MARK: - Background Dimming Tests
+
+    func testToggleDimmingEnablesSpotlightAndLeavesItEnabledWhenDimmingTurnsOff() {
+        for autoDim in [false, true] {
+            manager.cursorHighlightEnabled = false
+            manager.spotlightDimmingEnabled = false
+            manager.spotlightAutoDimEnabled = autoDim
+
+            manager.toggleSpotlightDimming()
+
+            XCTAssertTrue(manager.cursorHighlightEnabled)
+            XCTAssertTrue(manager.shouldShowDimming)
+
+            manager.toggleSpotlightDimming()
+
+            XCTAssertTrue(manager.cursorHighlightEnabled)
+            XCTAssertFalse(manager.shouldShowDimming)
+            XCTAssertEqual(manager.spotlightAutoDimEnabled, autoDim)
+        }
+    }
+
+    func testToggleDimmingEnablesDimmingWhenDisabledSpotlightHasStoredDimmingOn() {
+        manager.spotlightDimmingEnabled = true
+        manager.cursorHighlightEnabled = false
+
+        manager.toggleSpotlightDimming()
+
+        XCTAssertTrue(manager.cursorHighlightEnabled)
+        XCTAssertTrue(manager.shouldShowDimming)
+    }
+
+    func testToggleDimmingDoesNotChangeClickEffects() {
+        for clickEffects in [false, true] {
+            manager.clickEffectsEnabled = clickEffects
+            manager.toggleSpotlightDimming()
+            XCTAssertEqual(manager.clickEffectsEnabled, clickEffects)
+            manager.toggleSpotlightDimming()
+            XCTAssertEqual(manager.clickEffectsEnabled, clickEffects)
+        }
+    }
+
+    /// Dimming is off out of the box.
+    func testSpotlightDimmingEnabledDefaultsToFalse() {
+        XCTAssertFalse(manager.spotlightDimmingEnabled, "spotlightDimmingEnabled should default to false")
+    }
+
+    /// Unset opacity falls back to 50%.
+    func testSpotlightDimmingOpacityDefaultsToHalf() {
+        XCTAssertEqual(manager.spotlightDimmingOpacity, 0.5, "spotlightDimmingOpacity should default to 0.5")
+    }
+
+    /// Opacity round-trips through UserDefaults.
+    func testSpotlightDimmingOpacityPersistsToUserDefaults() {
+        manager.spotlightDimmingOpacity = 0.7
+
+        XCTAssertEqual(manager.spotlightDimmingOpacity, 0.7)
+        XCTAssertEqual(testDefaults.double(forKey: UserDefaults.spotlightDimmingOpacityKey), 0.7)
+    }
+
+    /// Dimming never shows without the spotlight enabled.
+    func testShouldShowDimmingRequiresCursorHighlightEnabled() {
+        manager.spotlightDimmingEnabled = true
+        manager.cursorHighlightEnabled = false
+
+        XCTAssertFalse(
+            manager.shouldShowDimming,
+            "shouldShowDimming should be false when cursor highlight is disabled"
+        )
+    }
+
+    /// Dimming shows when both it and the spotlight are on.
+    func testShouldShowDimmingTrueWhenBothEnabled() {
+        manager.cursorHighlightEnabled = true
+        manager.spotlightDimmingEnabled = true
+
+        XCTAssertTrue(manager.shouldShowDimming)
+    }
+
+    /// Dimming persists through clicks instead of flickering off.
+    func testShouldShowDimmingStaysTrueWhileMouseDown() {
+        manager.cursorHighlightEnabled = true
+        manager.spotlightDimmingEnabled = true
+        manager.isMouseDown = true
+
+        XCTAssertTrue(
+            manager.shouldShowDimming,
+            "Dimming should not be suppressed during clicks, unlike the glow spotlight"
+        )
+    }
+
+    /// Auto-dim is opt-in.
+    func testSpotlightAutoDimDefaultsToFalse() {
+        XCTAssertFalse(manager.spotlightAutoDimEnabled, "spotlightAutoDimEnabled should default to false")
+    }
+
+    /// Backwards compatibility: enabling the spotlight resets dimming off.
+    func testEnablingSpotlightStartsWithDimmingOffByDefault() {
+        manager.spotlightDimmingEnabled = true
+
+        manager.cursorHighlightEnabled = true
+
+        XCTAssertFalse(
+            manager.spotlightDimmingEnabled,
+            "Turning on the spotlight should reset dimming to off unless auto-dim is enabled"
+        )
+    }
+
+    /// Auto-dim brings dimming on together with the spotlight.
+    func testEnablingSpotlightTurnsOnDimmingWhenAutoDimEnabled() {
+        manager.spotlightAutoDimEnabled = true
+
+        manager.cursorHighlightEnabled = true
+
+        XCTAssertTrue(
+            manager.spotlightDimmingEnabled,
+            "Turning on the spotlight should enable dimming when auto-dim is on"
+        )
+    }
+
+    /// Turning the spotlight off does not rewrite the dimming preference.
+    func testDisablingSpotlightLeavesDimmingSettingUntouched() {
+        manager.cursorHighlightEnabled = true
+        manager.spotlightDimmingEnabled = true
+
+        manager.cursorHighlightEnabled = false
+
+        XCTAssertTrue(
+            manager.spotlightDimmingEnabled,
+            "Turning off the spotlight should not modify the dimming setting"
+        )
+    }
+
     // MARK: - shouldShowCursorHighlight Computed Property Tests
 
     func testShouldShowCursorHighlightReturnsFalseWhenDisabled() {
@@ -161,10 +293,34 @@ final class CursorHighlightManagerTests: XCTestCase {
         XCTAssertFalse(manager.isActive, "isActive should return false when clickEffectsEnabled is false")
     }
 
-    func testIsActiveReturnsTrueWhenClickEffectsEnabled() {
+    func testIsActiveReturnsFalseWhenNoOverlay() {
         manager.clickEffectsEnabled = true
 
-        XCTAssertTrue(manager.isActive, "isActive should return true when clickEffectsEnabled is true")
+        XCTAssertFalse(
+            manager.isActive,
+            "isActive should return false when no overlay is visible (ADR-0001)"
+        )
+    }
+
+    func testShouldShowRingReturnsFalseWhenOverlayGateBlocksClickEffects() {
+        manager.clickEffectsEnabled = true
+        manager.isMouseDown = true
+
+        XCTAssertFalse(
+            manager.shouldShowRing,
+            "shouldShowRing should return false when the overlay gate blocks click effects"
+        )
+    }
+
+    func testStartReleaseAnimationDoesNothingWhenOverlayGateBlocksClickEffects() {
+        manager.clickEffectsEnabled = true
+
+        manager.startReleaseAnimation()
+
+        XCTAssertNil(
+            manager.releaseAnimation,
+            "releaseAnimation should not be created when the overlay gate blocks click effects"
+        )
     }
 
     // MARK: - shouldShowRing Computed Property Tests

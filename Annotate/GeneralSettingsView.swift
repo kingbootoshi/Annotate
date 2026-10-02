@@ -8,8 +8,14 @@ struct GeneralSettingsView: View {
     private var hideDockIcon = false
     @AppStorage(UserDefaults.hideToolFeedbackKey)
     private var hideToolFeedback = false
-    @AppStorage(UserDefaults.persistTextModeKey)
-    private var persistTextMode = false
+    @AppStorage(UserDefaults.toolbarVisibleKey)
+    private var toolbarVisible = UserDefaults.toolbarVisibleDefault
+    @AppStorage(UserDefaults.soundsEnabledKey)
+    private var soundsEnabled = UserDefaults.soundsEnabledDefault
+    @AppStorage(UserDefaults.soundThemeKey)
+    private var soundTheme: SoundTheme = UserDefaults.soundThemeDefault
+    @AppStorage(UserDefaults.selectAfterPlacingTextKey)
+    private var selectAfterPlacingText = false
     @AppStorage(UserDefaults.defaultToolKey)
     private var defaultToolOption: DefaultToolOption = .lastUsed
 
@@ -27,7 +33,7 @@ struct GeneralSettingsView: View {
 
             Section {
                 LabeledContent {
-                    KeyboardShortcuts.Recorder("", name: .toggleOverlay)
+                    GlobalShortcutRecorder(name: .toggleOverlay)
                 } label: {
                     Text("Activation Shortcut")
                     Text("Primary keyboard shortcut to activate Annotate")
@@ -35,7 +41,7 @@ struct GeneralSettingsView: View {
                 }
 
                 LabeledContent {
-                    KeyboardShortcuts.Recorder("", name: .toggleAlwaysOnMode)
+                    GlobalShortcutRecorder(name: .toggleAlwaysOnMode)
                 } label: {
                     Text("Always-On Mode")
                     Text("Keep Annotate active without auto-hide")
@@ -61,6 +67,32 @@ struct GeneralSettingsView: View {
                     Text("Disable visual feedback when switching tools")
                 }
 
+                Toggle(isOn: $toolbarVisible) {
+                    Text("Show toolbar")
+                    Text("Display the floating shortcut toolbar on annotation overlays")
+                }
+                .onChange(of: toolbarVisible) { _, visible in
+                    AppDelegate.shared?.setToolbarVisible(visible)
+                }
+
+                Toggle(isOn: $soundsEnabled) {
+                    Text("Play sounds")
+                    Text("Play feedback sounds for overlay and clear actions")
+                }
+
+                Picker(selection: $soundTheme) {
+                    ForEach(SoundTheme.allCases) { theme in
+                        Text(theme.displayName).tag(theme)
+                    }
+                } label: {
+                    Text("Sound Theme")
+                    Text("Chalk, paper, marker, pencil, or typewriter cues")
+                }
+                .disabled(!soundsEnabled)
+                .onChange(of: soundTheme) { _, _ in
+                    SoundPlayer.shared.playOverlayOn()
+                }
+
                 Toggle(
                     isOn: Binding(
                         get: { !hideDockIcon },
@@ -74,9 +106,9 @@ struct GeneralSettingsView: View {
                     AppDelegate.shared?.updateDockIconVisibility()
                 }
 
-                Toggle(isOn: $persistTextMode) {
-                    Text("Persist Text Mode")
-                    Text("Stay in text mode after pressing Enter")
+                Toggle(isOn: $selectAfterPlacingText) {
+                    Text("Switch to Select after placing text")
+                    Text("After committing a label, select it so you can move it right away")
                 }
 
                 Picker(selection: $defaultToolOption) {
@@ -100,5 +132,41 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .toggleStyle(.switch)
         .settingsScrollEdgeEffect()
+    }
+}
+
+enum GlobalShortcutRecordingHandler {
+    @MainActor
+    static func handle(_ shortcut: KeyboardShortcuts.Shortcut?, for name: KeyboardShortcuts.Name,
+                       previousShortcut: KeyboardShortcuts.Shortcut?, manager: ShortcutManager? = nil) -> String? {
+        guard let shortcut,
+            let conflict = (manager ?? .shared).conflictForGlobalShortcut(shortcut, excluding: name)
+        else { return nil }
+        // Recorder saves before invoking its callback. Restore the accepted binding on conflict.
+        KeyboardShortcuts.setShortcut(previousShortcut, for: name)
+        return "This shortcut is already assigned to \(conflict). Change or clear it first."
+    }
+}
+
+private struct GlobalShortcutRecorder: View {
+    let name: KeyboardShortcuts.Name
+    @State private var previousShortcut: KeyboardShortcuts.Shortcut?
+    @State private var conflictMessage: String?
+
+    var body: some View {
+        KeyboardShortcuts.Recorder("", name: name) { shortcut in
+            conflictMessage = GlobalShortcutRecordingHandler.handle(
+                shortcut, for: name, previousShortcut: previousShortcut)
+            if conflictMessage == nil { previousShortcut = shortcut }
+        }
+        .onAppear { previousShortcut = KeyboardShortcuts.getShortcut(for: name) }
+        .alert("Shortcut Unavailable", isPresented: Binding(
+            get: { conflictMessage != nil },
+            set: { if !$0 { conflictMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(conflictMessage ?? "")
+        }
     }
 }

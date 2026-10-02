@@ -24,6 +24,8 @@ final class AppDelegateTests: XCTestCase, Sendable {
 
     nonisolated override func tearDown() {
         MainActor.assumeIsolated {
+            SettingsWindowManager.shared.settingsWindow?.close()
+            appDelegate.overlayKeyWindowOverride = nil
             appDelegate = nil
         }
         TestUserDefaults.removeSuite()
@@ -100,26 +102,50 @@ final class AppDelegateTests: XCTestCase, Sendable {
         }
     }
 
-    func testColorPicker() throws {
+    func testQuickPickerMenuItemsFailClosedWhenMainOverlayIsHidden() throws {
+        let menu = try XCTUnwrap(appDelegate.statusItem.menu)
+        let colorItem = try XCTUnwrap(
+            menu.items.first { $0.action == #selector(AppDelegate.showColorPicker(_:)) })
+        let widthItem = try XCTUnwrap(
+            menu.items.first { $0.action == #selector(AppDelegate.showLineWidthPicker(_:)) })
+
+        appDelegate.overlayWindows.values.forEach { $0.orderOut(nil) }
+
+        XCTAssertEqual(colorItem.title, "Color…")
+        XCTAssertEqual(widthItem.title, "Line Width…")
+        XCTAssertFalse(appDelegate.validateMenuItem(colorItem))
+        XCTAssertFalse(appDelegate.validateMenuItem(widthItem))
+    }
+
+    func testPickerMenuRoutesToVisibleMainOverlayCenter() throws {
+        let mainScreen = try XCTUnwrap(NSScreen.main)
+        let overlayWindow = try XCTUnwrap(appDelegate.overlayWindows[mainScreen])
+        appDelegate.overlayWindows.values.forEach { $0.orderOut(nil) }
+        overlayWindow.makeKeyAndOrderFront(nil)
+        defer { overlayWindow.orderOut(nil) }
+
+        let colorItem = NSMenuItem()
+        colorItem.action = #selector(AppDelegate.showColorPicker(_:))
+        XCTAssertTrue(appDelegate.validateMenuItem(colorItem))
+
         appDelegate.showColorPicker(nil)
-        let popover = try XCTUnwrap(appDelegate.colorPopover)
-        XCTAssertNotNil(popover.contentViewController)
-        XCTAssertEqual(popover.behavior, .transient)
+        let colorPicker = try XCTUnwrap(
+            overlayWindow.overlayView.subviews.compactMap { $0 as? QuickPickerView }.first)
+        XCTAssertEqual(colorPicker.mode, .color)
+        let expectedColorFrame = QuickPickerView.pickerFrame(
+            itemCount: colorPalette.count,
+            anchor: NSPoint(
+                x: overlayWindow.overlayView.bounds.midX,
+                y: overlayWindow.overlayView.bounds.midY),
+            within: overlayWindow.overlayView.bounds)
+        XCTAssertEqual(colorPicker.frame, expectedColorFrame)
 
-        // Popover presentation is asynchronous relative to show(relativeTo:)
-        // on macOS 26; spin the runloop briefly before checking.
-        let deadline = Date(timeIntervalSinceNow: 2)
-        while !popover.isShown && Date() < deadline {
-            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
-        }
-
-        // Presentation additionally requires an on-screen status item, which
-        // headless runners cannot provide; the popover wiring above is still
-        // verified there.
-        try XCTSkipUnless(
-            popover.isShown,
-            "Popover did not present; environment has no on-screen status item")
-        XCTAssertTrue(popover.isShown)
+        overlayWindow.cancelQuickPicker()
+        overlayWindow.overlayView.currentTool = .counter
+        appDelegate.showLineWidthPicker(nil)
+        let counterPicker = try XCTUnwrap(
+            overlayWindow.overlayView.subviews.compactMap { $0 as? QuickPickerView }.first)
+        XCTAssertEqual(counterPicker.mode, .counterSize)
     }
 
     // MARK: - Clear Drawings Tests
@@ -253,7 +279,7 @@ final class AppDelegateTests: XCTestCase, Sendable {
             overlayWindow.overlayView.fadeMode, "Expected fade mode to be true by default.")
 
         // Toggle fade mode.
-        appDelegate.toggleFadeMode(NSMenuItem())
+        appDelegate.toggleFadeMode(nil)
 
         XCTAssertFalse(
             overlayWindow.overlayView.fadeMode, "Expected fade mode to be false after toggle.")
@@ -261,6 +287,126 @@ final class AppDelegateTests: XCTestCase, Sendable {
         // UserDefaults should reflect this change.
         let persistedFadeMode = testDefaults.bool(forKey: UserDefaults.fadeModeKey)
         XCTAssertFalse(persistedFadeMode, "UserDefaults should now store false for fade mode.")
+    }
+
+    func testToggleFadeModeStartsFadeLoop() {
+        guard let overlayWindow = appDelegate.overlayWindows.values.first else {
+            XCTFail("No overlay window found")
+            return
+        }
+
+        overlayWindow.overlayView.fadeMode = false
+        overlayWindow.stopFadeLoop()
+        overlayWindow.overlayView.arrows = [
+            Arrow(
+                startPoint: NSPoint(x: 0, y: 0),
+                endPoint: NSPoint(x: 10, y: 10),
+                color: .systemRed,
+                lineWidth: 3,
+                creationTime: CACurrentMediaTime()
+            )
+        ]
+
+        appDelegate.toggleFadeMode(nil)
+
+        XCTAssertTrue(overlayWindow.overlayView.fadeMode)
+        XCTAssertNotNil(overlayWindow.fadeTimer)
+        overlayWindow.stopFadeLoop()
+    }
+
+    func testAlwaysOnExitStartsFadeLoopWhenPersistedFadeModeIsOn() {
+        guard let overlayWindow = appDelegate.overlayWindows.values.first else {
+            XCTFail("No overlay window found")
+            return
+        }
+
+        let now = CACurrentMediaTime()
+        overlayWindow.overlayView.arrows = [
+            Arrow(
+                startPoint: NSPoint(x: 0, y: 0),
+                endPoint: NSPoint(x: 10, y: 10),
+                color: .systemRed,
+                lineWidth: 3,
+                creationTime: now - 10
+            ),
+            Arrow(
+                startPoint: NSPoint(x: 20, y: 20),
+                endPoint: NSPoint(x: 30, y: 30),
+                color: .systemBlue,
+                lineWidth: 3,
+                creationTime: now
+            )
+        ]
+
+        appDelegate.alwaysOnMode = false
+        appDelegate.toggleAlwaysOnMode()
+        XCTAssertFalse(overlayWindow.overlayView.fadeMode)
+        XCTAssertNil(overlayWindow.fadeTimer)
+
+        appDelegate.toggleAlwaysOnMode()
+
+        XCTAssertTrue(overlayWindow.overlayView.fadeMode)
+        XCTAssertEqual(overlayWindow.overlayView.arrows.count, 1)
+        XCTAssertEqual(overlayWindow.overlayView.arrows.first?.startPoint, NSPoint(x: 20, y: 20))
+        XCTAssertNotNil(overlayWindow.fadeTimer)
+        overlayWindow.stopFadeLoop()
+    }
+
+    func testFadeAndClearAllMenuActionsRequireOverlayKeyWindow() throws {
+        let menu = try XCTUnwrap(appDelegate.statusItem.menu)
+        let fadeItem = try XCTUnwrap(
+            menu.items.first { $0.action == #selector(AppDelegate.toggleFadeMode(_:)) })
+        let clearItem = try XCTUnwrap(
+            menu.items.first { $0.action == #selector(AppDelegate.clearAllAnnotations) })
+        let overlayWindow = try XCTUnwrap(appDelegate.overlayWindows.values.first)
+        overlayWindow.overlayView.fadeMode = false
+        overlayWindow.overlayView.paths.append(TestFactory.createDrawingPath())
+        appDelegate.overlayWindows.values.forEach { $0.orderOut(nil) }
+        defer {
+            SettingsWindowManager.shared.settingsWindow?.close()
+            overlayWindow.orderOut(nil)
+        }
+
+        XCTAssertFalse(appDelegate.validateMenuItem(fadeItem))
+        XCTAssertFalse(appDelegate.validateMenuItem(clearItem))
+        appDelegate.toggleFadeMode(NSMenuItem())
+        appDelegate.clearAllAnnotations()
+        XCTAssertFalse(overlayWindow.overlayView.fadeMode)
+        XCTAssertEqual(overlayWindow.overlayView.paths.count, 1)
+
+        // Settings is a normal-level window; the overlay sits above screen-saver
+        // level, so show() cannot steal key in CI. orderFront keeps the overlay
+        // visible (the High: Settings focused, overlay still on screen) without
+        // making it the key window.
+        SettingsWindowManager.shared.show()
+        overlayWindow.orderFront(nil)
+        if overlayWindow.isKeyWindow {
+            overlayWindow.resignKey()
+        }
+        XCTAssertTrue(overlayWindow.isVisible)
+        XCTAssertFalse(overlayWindow.isKeyWindow)
+        XCTAssertFalse(appDelegate.validateMenuItem(fadeItem))
+        XCTAssertFalse(appDelegate.validateMenuItem(clearItem))
+        appDelegate.toggleFadeMode(NSMenuItem())
+        appDelegate.clearAllAnnotations()
+        XCTAssertFalse(
+            overlayWindow.overlayView.fadeMode,
+            "Fade must not toggle from a menu equivalent unless the overlay is key")
+        XCTAssertEqual(
+            overlayWindow.overlayView.paths.count, 1,
+            "Clear All must not fire from a menu equivalent unless the overlay is key")
+
+        // XCTest will not make this overlay key: ToolbarPanel answers
+        // canBecomeKey = false, so makeKeyAndOrderFront leaves isKeyWindow false.
+        // Drive the same product gate through the test seam instead.
+        overlayWindow.orderFront(nil)
+        appDelegate.overlayKeyWindowOverride = true
+        XCTAssertTrue(appDelegate.validateMenuItem(fadeItem))
+        XCTAssertTrue(appDelegate.validateMenuItem(clearItem))
+        appDelegate.toggleFadeMode(NSMenuItem())
+        appDelegate.clearAllAnnotations()
+        XCTAssertTrue(overlayWindow.overlayView.fadeMode)
+        XCTAssertTrue(overlayWindow.overlayView.paths.isEmpty)
     }
 
     func testOverlayWindowsRestorePersistedFadeMode() {
@@ -285,11 +431,17 @@ final class AppDelegateTests: XCTestCase, Sendable {
 
         let newState = testDefaults.bool(forKey: UserDefaults.enableBoardKey)
         XCTAssertNotEqual(initialState, newState, "Board visibility should be toggled")
+        for window in appDelegate.overlayWindows.values {
+            XCTAssertEqual(window.overlayView.adaptColorsToBoardType, newState)
+        }
 
         appDelegate.toggleBoardVisibility(nil)
         let finalState = testDefaults.bool(forKey: UserDefaults.enableBoardKey)
         XCTAssertEqual(
             initialState, finalState, "Board visibility should be toggled back to original state")
+        for window in appDelegate.overlayWindows.values {
+            XCTAssertEqual(window.overlayView.adaptColorsToBoardType, finalState)
+        }
     }
 
     func testUpdateBoardMenuItems() {
@@ -368,39 +520,6 @@ final class AppDelegateTests: XCTestCase, Sendable {
         wait(for: [expectation], timeout: 1.0)
 
         CursorHighlightManager.shared = CursorHighlightManager()
-    }
-
-    // MARK: - Previous Tool Tracking Tests
-
-    func testSwitchToolSavesPreviousToolForTextMode() {
-        guard let overlayWindow = appDelegate.overlayWindows.values.first else {
-            XCTFail("No overlay window available")
-            return
-        }
-
-        appDelegate.enableArrowMode(NSMenuItem())
-        XCTAssertEqual(overlayWindow.overlayView.currentTool, .arrow)
-
-        appDelegate.enableTextMode(NSMenuItem())
-
-        XCTAssertEqual(overlayWindow.overlayView.currentTool, .text)
-        XCTAssertEqual(overlayWindow.overlayView.previousTool, .arrow, "previousTool should be .arrow after switching from arrow to text")
-    }
-
-    func testSwitchToolDoesNotSavePreviousToolForOtherModes() {
-        guard let overlayWindow = appDelegate.overlayWindows.values.first else {
-            XCTFail("No overlay window available")
-            return
-        }
-
-        overlayWindow.overlayView.previousTool = .pen
-        appDelegate.enableArrowMode(NSMenuItem())
-
-        let previousToolBefore = overlayWindow.overlayView.previousTool
-        appDelegate.enableLineMode(NSMenuItem())
-
-        XCTAssertEqual(overlayWindow.overlayView.currentTool, .line)
-        XCTAssertEqual(overlayWindow.overlayView.previousTool, previousToolBefore, "previousTool should remain unchanged when not switching to text mode")
     }
 
     // MARK: - Default Tool Tests
@@ -512,32 +631,33 @@ final class AppDelegateTests: XCTestCase, Sendable {
         }
     }
 
-    func testInternalToolRestoreDoesNotOverwriteLastUsedTool() {
+    func testInternalToolSwitchDoesNotOverwriteLastUsedTool() throws {
         guard let overlayWindow = appDelegate.overlayWindows.values.first else {
             XCTFail("No overlay window available")
             return
         }
 
-        // restorePreviousTool reads persistTextMode from UserDefaults.standard, so pin it
-        // to false for this test and restore whatever was there afterwards.
-        let savedPersistTextMode = UserDefaults.standard.object(forKey: UserDefaults.persistTextModeKey)
-        UserDefaults.standard.set(false, forKey: UserDefaults.persistTextModeKey)
-        defer {
-            if let saved = savedPersistTextMode {
-                UserDefaults.standard.set(saved, forKey: UserDefaults.persistTextModeKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: UserDefaults.persistTextModeKey)
-            }
-        }
+        appDelegate.userDefaults.selectAfterPlacingText = true
 
         appDelegate.enablePenMode(NSMenuItem())
         appDelegate.enableTextMode(NSMenuItem())
         XCTAssertEqual(testDefaults.lastUsedTool, .text, "Explicitly switching to text should persist it as last used")
-        XCTAssertEqual(overlayWindow.overlayView.previousTool, .pen)
 
-        overlayWindow.overlayView.restorePreviousTool()
+        let overlayView: OverlayView = try XCTUnwrap(overlayWindow.overlayView)
+        let point = NSPoint(x: 100, y: 100)
+        overlayView.currentTextAnnotation = TextAnnotation(
+            text: "", position: point, color: .red,
+            fontSize: defaultTextAnnotationFontSize
+        )
+        overlayView.createTextField(at: point, withText: "", width: 100)
+        let textField = try XCTUnwrap(overlayView.activeTextField)
+        textField.stringValue = "Hello"
+        overlayView.commitTextField(textField)
 
-        XCTAssertEqual(overlayWindow.overlayView.currentTool, .pen, "Finishing a text annotation should restore the previous tool")
-        XCTAssertEqual(testDefaults.lastUsedTool, .text, "Internal tool restores should not overwrite the persisted last-used tool")
+        XCTAssertEqual(overlayView.currentTool, .select, "Committing a label should switch to Select")
+        XCTAssertEqual(testDefaults.lastUsedTool, .text, "Internal tool switches should not overwrite the persisted last-used tool")
     }
 }
+
+@MainActor
+final class MockAppDelegate: AppDelegate {}

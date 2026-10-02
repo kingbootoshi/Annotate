@@ -56,6 +56,40 @@ final class GeneralSettingsViewTests: XCTestCase {
         XCTAssertFalse(finalValue, "hideToolFeedback should be false after resetting")
     }
 
+    func testSoundsEnabledDefaultsToTrueWhenAbsent() {
+        testDefaults.removeObject(forKey: UserDefaults.soundsEnabledKey)
+
+        XCTAssertTrue(testDefaults.soundsEnabled)
+    }
+
+    func testSoundsEnabledPersistsExplicitValue() {
+        testDefaults.soundsEnabled = false
+        XCTAssertFalse(testDefaults.soundsEnabled)
+
+        testDefaults.soundsEnabled = true
+        XCTAssertTrue(testDefaults.soundsEnabled)
+    }
+
+    func testSoundThemeDefaultsToInkNibWhenAbsent() {
+        testDefaults.removeObject(forKey: UserDefaults.soundThemeKey)
+
+        XCTAssertEqual(testDefaults.soundTheme, .inkNib)
+    }
+
+    func testSoundThemePersistsExplicitValue() {
+        testDefaults.soundTheme = .paper
+        XCTAssertEqual(testDefaults.soundTheme, .paper)
+
+        testDefaults.soundTheme = .chalk
+        XCTAssertEqual(testDefaults.soundTheme, .chalk)
+    }
+
+    func testSoundThemeFallsBackToInkNibForUnknownValue() {
+        testDefaults.set("granite", forKey: UserDefaults.soundThemeKey)
+
+        XCTAssertEqual(testDefaults.soundTheme, .inkNib)
+    }
+
     func testEnableBoardBinding() {
         let initialValue = testDefaults.bool(forKey: UserDefaults.enableBoardKey)
         XCTAssertFalse(initialValue, "enableBoard should default to false")
@@ -211,23 +245,20 @@ final class GeneralSettingsViewTests: XCTestCase {
         )
     }
 
-    // MARK: - Persist Text Mode Toggle Tests
+    // MARK: - Select After Placing Text Toggle Tests
 
-    func testPersistTextModeToggleDefaultsToFalse() {
-        testDefaults.removeObject(forKey: UserDefaults.persistTextModeKey)
+    func testSelectAfterPlacingTextDefaultsToFalse() {
+        testDefaults.removeObject(forKey: UserDefaults.selectAfterPlacingTextKey)
 
-        let defaultValue = testDefaults.bool(forKey: UserDefaults.persistTextModeKey)
-        XCTAssertFalse(defaultValue, "persistTextMode should default to false")
+        XCTAssertFalse(testDefaults.selectAfterPlacingText, "selectAfterPlacingText should default to false")
     }
 
-    func testPersistTextModeTogglePersistsValue() {
-        testDefaults.set(true, forKey: UserDefaults.persistTextModeKey)
-        let onValue = testDefaults.bool(forKey: UserDefaults.persistTextModeKey)
-        XCTAssertTrue(onValue, "persistTextMode should be true after setting to true")
+    func testSelectAfterPlacingTextPersistsValue() {
+        testDefaults.selectAfterPlacingText = true
+        XCTAssertTrue(testDefaults.selectAfterPlacingText, "selectAfterPlacingText should be true after setting to true")
 
-        testDefaults.set(false, forKey: UserDefaults.persistTextModeKey)
-        let offValue = testDefaults.bool(forKey: UserDefaults.persistTextModeKey)
-        XCTAssertFalse(offValue, "persistTextMode should be false after setting to false")
+        testDefaults.selectAfterPlacingText = false
+        XCTAssertFalse(testDefaults.selectAfterPlacingText, "selectAfterPlacingText should be false after setting to false")
     }
 
     // MARK: - Edge Cases
@@ -274,6 +305,10 @@ final class GeneralSettingsViewTests: XCTestCase {
     func testShortcutsSettingsViewCanBeEmbeddedInHostingController() {
         let hostingController = NSHostingController(rootView: ShortcutsSettingsView())
         XCTAssertNotNil(hostingController.view)
+    }
+
+    func testBuiltInShortcutsOnlyListFixedActions() {
+        XCTAssertEqual(ShortcutsSettingsView.builtInShortcuts.map(\.keys), ["Delete", "⌘Z", "⇧⌘Z", "Esc"])
     }
 
     // MARK: - Persistence Tests

@@ -4,7 +4,7 @@ import XCTest
 
 @MainActor
 final class CursorHighlightWindowTests: XCTestCase {
-    func testAnimationLoopUsesWindowDisplayLink() {
+    func testAnimationLoopOwnsWindowDisplayLinkOnlyWhileRunning() {
         let window = CursorHighlightWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: .borderless,
@@ -13,11 +13,55 @@ final class CursorHighlightWindowTests: XCTestCase {
         )
 
         window.startAnimationLoop()
+        let displayLink = window.animationDisplayLink
 
-        XCTAssertNotNil(window.animationDisplayLink)
+        XCTAssertNotNil(displayLink)
+
+        window.startAnimationLoop()
+        XCTAssertTrue(window.animationDisplayLink === displayLink)
 
         window.stopAnimationLoop()
-
         XCTAssertNil(window.animationDisplayLink)
+    }
+
+    func testUpdateVisibilityHidesSpotlightAndDimmingImmediatelyWhenClickEffectsKeepWindowAlive() throws {
+        let defaults = TestUserDefaults.create()
+        let originalShared = CursorHighlightManager.shared
+        let manager = CursorHighlightManager(userDefaults: defaults)
+        CursorHighlightManager.shared = manager
+        let window = CursorHighlightWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        defer {
+            window.stopAnimationLoop()
+            window.orderOut(nil)
+            CursorHighlightManager.shared = originalShared
+            TestUserDefaults.removeSuite()
+        }
+
+        manager.clickEffectsEnabled = true
+        manager.cursorHighlightEnabled = false
+
+        let layers = try XCTUnwrap(window.highlightView.layer?.sublayers)
+        let spotlight = try XCTUnwrap(layers.first { $0.name == "spotlight" })
+        let dimming = try XCTUnwrap(layers.first { $0.name == "dimming" })
+        spotlight.opacity = 1
+        dimming.opacity = 1
+
+        window.updateVisibility()
+
+        XCTAssertEqual(
+            spotlight.opacity,
+            0,
+            "Spotlight should hide as soon as it is disabled, even if click effects keep the window ordered in"
+        )
+        XCTAssertEqual(
+            dimming.opacity,
+            0,
+            "Dimming should hide as soon as the spotlight is disabled, even if click effects keep the window ordered in"
+        )
     }
 }

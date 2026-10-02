@@ -9,13 +9,17 @@ targets:
     type: application
     platform: macOS
     sources:
-      - Annotate
+      - path: Annotate
+        excludes:
+          - "Sounds/**"
+      - path: Annotate/Sounds
+        buildPhase: resources
     dependencies:
       - package: KeyboardShortcuts
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.epilande.Annotate
-        MARKETING_VERSION: "1.4.1"
+        MARKETING_VERSION: "1.7.0"
         CURRENT_PROJECT_VERSION: "1"
         CODE_SIGN_ENTITLEMENTS: Annotate/Annotate.entitlements
         SWIFT_VERSION: "5.0"
