@@ -1121,6 +1121,20 @@ class OverlayView: NSView, NSTextFieldDelegate {
         renderedPath.stroke()
     }
 
+    /// One pill color for both the live edit box and the committed label (ADR-0001: one owner).
+    static func labelPillColor(for textColor: NSColor) -> NSColor {
+        textColor.contrastingColor().withAlphaComponent(0.85)
+    }
+
+    /// Mirrors the committed look while typing: pill when background is on, clear when off.
+    func applyTextFieldBackground(_ textField: NSTextField) {
+        let hasBackground = currentTextAnnotation?.hasBackground ?? UserDefaults.standard.textBackgroundEnabled
+        let textColor = textField.textColor ?? currentColor
+        textField.backgroundColor = hasBackground ? Self.labelPillColor(for: textColor) : .clear
+        textField.drawsBackground = hasBackground
+        textField.needsDisplay = true
+    }
+
     private func drawText(_ annotation: TextAnnotation) {
         let adaptedColor = adaptColorForBoard(annotation.color, boardType: currentBoardType)
 
@@ -1139,7 +1153,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
                 height: textSize.height + 8
             )
             let pill = NSBezierPath(roundedRect: pillRect, xRadius: 6, yRadius: 6)
-            adaptedColor.contrastingColor().withAlphaComponent(0.85).setFill()
+            Self.labelPillColor(for: adaptedColor).setFill()
             pill.fill()
         }
 
@@ -1688,17 +1702,13 @@ class OverlayView: NSView, NSTextFieldDelegate {
         textField.anchorX = textField.frame.origin.x
         textField.font = font
 
-        let boardType = currentBoardType
-        textField.backgroundColor = boardType == .blackboard
-            ? NSColor.black.withAlphaComponent(0.85)
-            : NSColor.white.withAlphaComponent(0.92)
-        textField.textColor = adaptColorForBoard(currentColor, boardType: boardType)
+        textField.textColor = adaptColorForBoard(currentColor, boardType: currentBoardType)
+        applyTextFieldBackground(textField)
 
         textField.isBordered = false
         textField.isEditable = true
         textField.isSelectable = true
         textField.isBezeled = false
-        textField.drawsBackground = true
         textField.usesSingleLineMode = false
         textField.cell?.wraps = false
         textField.cell?.truncatesLastVisibleLine = false
@@ -1935,6 +1945,7 @@ class OverlayView: NSView, NSTextFieldDelegate {
 
     func syncTextOptions() {
         guard let field = activeTextField else { return }
+        applyTextFieldBackground(field)
         textOptionsModel.hasBackground = currentTextAnnotation?.hasBackground
             ?? UserDefaults.standard.textBackgroundEnabled
         textOptionsModel.fontSize = field.font?.pointSize ?? UserDefaults.standard.textToolFontSize
